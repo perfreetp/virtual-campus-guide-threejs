@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { addWindowGrid, createBuildingMaterial, createPodium, createRoof } from '../three/builders/primitives';
+import { createDeviceMarker, updateDeviceMarker } from '../three/builders/deviceMarkers';
 import { findCampusPath } from '../utils/pathfinding';
 
 const props = defineProps({
@@ -41,10 +42,34 @@ const props = defineProps({
   route: {
     type: Object,
     default: null
+  },
+  devices: {
+    type: Array,
+    default: () => []
+  },
+  deviceLayerVisible: {
+    type: Boolean,
+    default: false
+  },
+  visibleDeviceIds: {
+    type: Array,
+    default: () => []
+  },
+  selectedDeviceId: {
+    type: String,
+    default: ''
+  },
+  deviceFocusKey: {
+    type: Number,
+    default: 0
+  },
+  savingMode: {
+    type: Boolean,
+    default: false
   }
 });
 
-const emit = defineEmits(['selectBuilding', 'cameraState']);
+const emit = defineEmits(['selectBuilding', 'selectDevice', 'cameraState']);
 
 const canvasHost = ref(null);
 let renderer;
@@ -64,9 +89,13 @@ let ambientLight;
 let sunLight;
 let fillLight;
 let rainGroup;
+let deviceLayer;
 let frameCount = 0;
 const buildingGroups = new Map();
 const interactiveMeshes = [];
+const deviceGroups = new Map();
+const deviceMeshes = [];
+let hoveredDeviceId = '';
 const clock = new THREE.Clock();
 const buildingPalettes = {
   teaching: {
@@ -611,7 +640,7 @@ function setupScene() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.minDistance = 8;
+  controls.minDistance = 3.2;
   controls.maxDistance = 42;
   controls.maxPolarAngle = Math.PI / 2.18;
   controls.target.set(0, 0.4, 0);
@@ -634,10 +663,40 @@ function setupScene() {
 
   createCampusBase();
   props.buildings.forEach(createBuilding);
+  createDeviceLayer();
   updateCategoryVisibility();
   updateHighlights();
   updateRoute();
   updateEnvironment();
+  updateDeviceVisibility();
+}
+
+function createDeviceLayer() {
+  deviceLayer = new THREE.Group();
+  deviceLayer.name = 'device-layer';
+  props.devices.forEach((device) => {
+    const marker = createDeviceMarker(device);
+    deviceLayer.add(marker);
+    deviceGroups.set(device.id, marker);
+    marker.userData.parts.forEach((part) => deviceMeshes.push(part));
+  });
+  scene.add(deviceLayer);
+}
+
+function updateDeviceVisibility() {
+  if (!deviceLayer) {
+    return;
+  }
+  deviceLayer.visible = props.deviceLayerVisible;
+  if (!props.deviceLayerVisible) {
+    return;
+  }
+
+  const visibleIds = new Set(props.visibleDeviceIds);
+  deviceGroups.forEach((group, id) => {
+    const forceVisible = id === props.selectedDeviceId;
+    group.visible = forceVisible || visibleIds.has(id);
+  });
 }
 
 function handlePointerDown(event) {
@@ -667,11 +726,21 @@ function handlePointerUp(event) {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObjects(interactiveMeshes, false);
-  if (!hits.length) {
+  const deviceHits = props.deviceLayerVisible
+    ? raycaster.intersectObjects(deviceMeshes, false)
+    : [];
+  const deviceHit = deviceHits[0];
+  const buildingHit = hits[0];
+  if (deviceHit && (!buildingHit || deviceHit.distance <= buildingHit.distance)) {
+    emit('selectDevice', deviceHit.object.userData.device);
     return;
   }
 
-  const building = hits[0].object.userData.building;
+  if (!buildingHit || buildingHit.object.userData.device) {
+    return;
+  }
+
+  const building = buildingHit.object.userData.building;
   if (building) {
     emit('selectBuilding', building);
   }
@@ -686,14 +755,21 @@ function handlePointerMove(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObjects(interactiveMeshes, false);
-  const building = hits[0]?.object.userData.building;
-  hoveredBuildingId = building?.id || '';
-  renderer.domElement.style.cursor = building ? 'pointer' : 'grab';
+  const buildingHits = raycaster.intersectObjects(interactiveMeshes, false);
+  const deviceHits = props.deviceLayerVisible
+    ? raycaster.intersectObjects(deviceMeshes, false)
+    : [];
+  const nearestDevice = deviceHits[0];
+  const nearestBuilding = buildingHits[0];
+  const hoverDevice = nearestDevice && (!nearestBuilding || nearestDevice.distance <= nearestBuilding.distance);
+  hoveredDeviceId = hoverDevice ? nearestDevice.object.userData.device.id : '';
+  hoveredBuildingId = hoverDevice ? '' : nearestBuilding?.object.userData.building?.id || '';
+  renderer.domElement.style.cursor = hoveredDeviceId || hoveredBuildingId ? 'pointer' : 'grab';
 }
 
 function handlePointerLeave() {
   hoveredBuildingId = '';
+  hoveredDeviceId = '';
   if (renderer?.domElement) {
     renderer.domElement.style.cursor = 'grab';
   }
@@ -714,7 +790,7 @@ function updateHighlights() {
   buildingGroups.forEach((group, id) => {
     const isActive = id === props.selectedBuildingId || id === props.focusedBuildingId;
     group.traverse((child) => {
-      if (!child.isMesh || !child.material.color) {
+      if (!child.isMesh || !child.material.color || child.userData.device) {
         return;
       }
 
@@ -778,6 +854,20 @@ function focusBuilding(id, mode = props.cameraMode) {
   }
 
   startCameraFlight(nextPosition, nextTarget, mode === 'orbit' ? 0.95 : 1.18);
+}
+
+function focusOnDevice(device) {
+  if (!device) {
+    return;
+  }
+
+  orbitingBuildingId = '';
+  const target = new THREE.Vector3(device.position[0], device.position[1] + 0.7, device.position[2]);
+  const currentDirection = camera.position.clone().sub(controls.target).normalize();
+  currentDirection.y = THREE.MathUtils.clamp(currentDirection.y + 0.12, 0.24, 0.5);
+  currentDirection.normalize();
+  const nextPosition = target.clone().add(currentDirection.multiplyScalar(4.6));
+  startCameraFlight(nextPosition, target, 1.05);
 }
 
 function focusRoute() {
@@ -901,7 +991,7 @@ function updateEnvironment() {
 
   buildingGroups.forEach((group) => {
     group.traverse((child) => {
-      if (child.isMesh && child.material?.emissive) {
+      if (child.isMesh && child.material?.emissive && !child.userData.device) {
         child.material.emissiveIntensity = props.sceneMode === 'night' ? 0.22 : 0.05;
       }
     });
@@ -1162,6 +1252,17 @@ function animate() {
     });
   }
 
+  if (deviceLayer?.visible) {
+    deviceGroups.forEach((group) => {
+      if (group.visible) {
+        updateDeviceMarker(group, elapsed, {
+          selectedDeviceId: props.selectedDeviceId,
+          savingMode: props.savingMode
+        });
+      }
+    });
+  }
+
   controls.update();
   if (frameCount % 12 === 0) {
     const direction = camera.position.clone().sub(controls.target);
@@ -1203,6 +1304,13 @@ watch(() => props.route, updateRoute, { deep: true });
 watch(() => props.routeFocusKey, () => focusRoute());
 watch(() => props.cameraFocusKey, () => focusBuilding(props.selectedBuildingId, props.cameraMode));
 watch(() => props.sceneMode, updateEnvironment);
+watch(() => props.deviceLayerVisible, updateDeviceVisibility);
+watch(() => props.visibleDeviceIds, updateDeviceVisibility, { deep: true });
+watch(() => props.selectedDeviceId, updateDeviceVisibility);
+watch(() => props.deviceFocusKey, () => {
+  const device = props.devices.find((item) => item.id === props.selectedDeviceId);
+  focusOnDevice(device);
+});
 </script>
 
 <template>

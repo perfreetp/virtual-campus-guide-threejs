@@ -1,10 +1,20 @@
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import CampusScene from './components/CampusScene.vue';
 import ControlPanel from './components/ControlPanel.vue';
 import InfoPanel from './components/InfoPanel.vue';
+import OpsDock from './components/OpsDock.vue';
+import DeviceDetailCard from './components/DeviceDetailCard.vue';
 import { campusBuildings, categoryNames, recommendedRoutes } from './mock/campusData';
 import { findCampusPath, toMiniMapPoint } from './utils/pathfinding';
+import {
+  deviceState,
+  visibleDeviceIds,
+  selectedDevice,
+  selectDevice,
+  startDeviceTelemetry,
+  stopDeviceTelemetry
+} from './store/deviceStore';
 
 const activeCategory = ref('all');
 const selectedBuildingId = ref(campusBuildings[0].id);
@@ -143,8 +153,17 @@ function handleCameraState(state) {
   cameraHeading.value = state.heading;
 }
 
+function handleDeviceSelect(device) {
+  selectDevice(device);
+}
+
+onMounted(() => {
+  startDeviceTelemetry();
+});
+
 onBeforeUnmount(() => {
   window.clearTimeout(buildingSelectTimer);
+  stopDeviceTelemetry();
 });
 </script>
 
@@ -160,7 +179,14 @@ onBeforeUnmount(() => {
       :camera-focus-key="cameraFocusKey"
       :scene-mode="sceneMode"
       :route="route"
+      :devices="deviceState.devices"
+      :device-layer-visible="deviceState.layerVisible"
+      :visible-device-ids="[...visibleDeviceIds]"
+      :selected-device-id="deviceState.selectedDeviceId"
+      :device-focus-key="deviceState.deviceFocusKey"
+      :saving-mode="deviceState.savingMode"
       @select-building="handleBuildingSelect"
+      @select-device="handleDeviceSelect"
       @camera-state="handleCameraState"
     />
 
@@ -334,5 +360,8 @@ onBeforeUnmount(() => {
         ></button>
       </div>
     </section>
+
+    <DeviceDetailCard :device="selectedDevice" />
+    <OpsDock />
   </main>
 </template>
