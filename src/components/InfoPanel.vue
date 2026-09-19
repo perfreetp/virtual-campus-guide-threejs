@@ -5,15 +5,32 @@ defineProps({
   building: {
     type: Object,
     required: true
+  },
+  favorited: {
+    type: Boolean,
+    default: false
   }
 });
+
+const emit = defineEmits(['toggleFavorite']);
 </script>
 
 <template>
   <aside class="info-panel">
     <div class="info-accent"></div>
     <p class="panel-label">建筑信息</p>
-    <h2>{{ building.name }}</h2>
+    <div class="info-title-row">
+      <h2>{{ building.name }}</h2>
+      <button
+        class="favorite-btn"
+        type="button"
+        :class="{ active: favorited }"
+        :aria-pressed="favorited"
+        @click="emit('toggleFavorite', building.id)"
+      >
+        {{ favorited ? '已收藏' : '收藏' }}
+      </button>
+    </div>
     <span class="category-pill">{{ categoryNames[building.category] }}</span>
 
     <dl>

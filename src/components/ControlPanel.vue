@@ -7,35 +7,13 @@ const props = defineProps({
     type: Array,
     required: true
   },
-  filteredBuildings: {
-    type: Array,
-    required: true
-  },
-  recommendedRoutes: {
-    type: Array,
-    required: true
-  },
   category: {
-    type: String,
-    required: true
-  },
-  startId: {
-    type: String,
-    required: true
-  },
-  endId: {
     type: String,
     required: true
   }
 });
 
-const emit = defineEmits([
-  'update:category',
-  'update:startId',
-  'update:endId',
-  'search',
-  'routePick'
-]);
+const emit = defineEmits(['update:category', 'search']);
 
 const searchKeyword = ref('');
 
@@ -94,37 +72,5 @@ function handleSearchSubmit() {
         <option v-for="building in searchOptions" :key="building.id" :value="building.name" />
       </datalist>
     </form>
-
-    <div class="route-box">
-      <div class="route-selects">
-        <label>
-          <span>起点</span>
-          <select :value="startId" @change="emit('update:startId', $event.target.value)">
-            <option v-for="building in buildings" :key="building.id" :value="building.id">
-              {{ building.name }}
-            </option>
-          </select>
-        </label>
-        <label>
-          <span>终点</span>
-          <select :value="endId" @change="emit('update:endId', $event.target.value)">
-            <option v-for="building in buildings" :key="building.id" :value="building.id">
-              {{ building.name }}
-            </option>
-          </select>
-        </label>
-      </div>
-
-      <div class="route-buttons">
-        <button
-          v-for="routeItem in recommendedRoutes"
-          :key="routeItem.id"
-          type="button"
-          @click="emit('routePick', routeItem)"
-        >
-          {{ routeItem.name }}
-        </button>
-      </div>
-    </div>
   </aside>
 </template>

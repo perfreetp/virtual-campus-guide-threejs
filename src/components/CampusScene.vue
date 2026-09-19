@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { addWindowGrid, createBuildingMaterial, createPodium, createRoof } from '../three/builders/primitives';
-import { findCampusPath } from '../utils/pathfinding';
+import { formatDistance } from '../utils/pathfinding';
 
 const props = defineProps({
   buildings: {
@@ -38,13 +38,33 @@ const props = defineProps({
     type: String,
     default: 'day'
   },
-  route: {
+  routePlan: {
     type: Object,
     default: null
+  },
+  flying: {
+    type: Boolean,
+    default: false
+  },
+  activeStopIndex: {
+    type: Number,
+    default: -1
+  },
+  heatmapVisible: {
+    type: Boolean,
+    default: false
+  },
+  crowd: {
+    type: Object,
+    default: () => ({})
+  },
+  heatFilter: {
+    type: Object,
+    default: () => ({ department: 'all', buildingId: 'all' })
   }
 });
 
-const emit = defineEmits(['selectBuilding', 'cameraState']);
+const emit = defineEmits(['selectBuilding', 'cameraState', 'flyProgress', 'flyEnd']);
 
 const canvasHost = ref(null);
 let renderer;
@@ -65,8 +85,11 @@ let sunLight;
 let fillLight;
 let rainGroup;
 let frameCount = 0;
+let heatmapGroup;
+let routeFlight = null;
 const buildingGroups = new Map();
 const interactiveMeshes = [];
+const heatMeshes = [];
 const clock = new THREE.Clock();
 const buildingPalettes = {
   teaching: {
@@ -637,6 +660,7 @@ function setupScene() {
   updateCategoryVisibility();
   updateHighlights();
   updateRoute();
+  updateHeatmap();
   updateEnvironment();
 }
 
@@ -666,6 +690,14 @@ function handlePointerUp(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
+  if (props.heatmapVisible && heatMeshes.length) {
+    const heatHits = raycaster.intersectObjects(heatMeshes, false);
+    const heatBuilding = heatHits[0]?.object.userData.building;
+    if (heatBuilding) {
+      emit('selectBuilding', heatBuilding);
+      return;
+    }
+  }
   const hits = raycaster.intersectObjects(interactiveMeshes, false);
   if (!hits.length) {
     return;
@@ -686,6 +718,13 @@ function handlePointerMove(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
+  if (props.heatmapVisible && heatMeshes.length) {
+    const heatHits = raycaster.intersectObjects(heatMeshes, false);
+    const heatBuilding = heatHits[0]?.object.userData.building;
+    hoveredBuildingId = heatBuilding?.id || '';
+    renderer.domElement.style.cursor = heatBuilding ? 'pointer' : 'grab';
+    return;
+  }
   const hits = raycaster.intersectObjects(interactiveMeshes, false);
   const building = hits[0]?.object.userData.building;
   hoveredBuildingId = building?.id || '';
@@ -742,6 +781,7 @@ function easeInOutCubic(value) {
 }
 
 function startCameraFlight(nextPosition, nextTarget, duration = 1.12) {
+  stopRouteFlight(false);
   cameraFlight = {
     fromPosition: camera.position.clone(),
     fromTarget: controls.target.clone(),
@@ -750,6 +790,73 @@ function startCameraFlight(nextPosition, nextTarget, duration = 1.12) {
     start: clock.getElapsedTime(),
     duration
   };
+}
+
+function startRouteFlight() {
+  if (!routeGroup?.userData.curve || !props.routePlan?.reachable) {
+    return;
+  }
+
+  cameraFlight = null;
+  orbitingBuildingId = '';
+  const curve = routeGroup.userData.curve;
+  const totalDistance = props.routePlan.totalDistance || 0;
+  const speed = props.routePlan.mode === 'bike' ? 220 : 80;
+  const duration = THREE.MathUtils.clamp((totalDistance / speed) * 8, 6, 24);
+  routeFlight = {
+    curve,
+    start: clock.getElapsedTime(),
+    duration,
+    lastStopIndex: -1
+  };
+  controls.enabled = false;
+}
+
+function stopRouteFlight(emitEnd = true) {
+  if (!routeFlight) {
+    return;
+  }
+
+  routeFlight = null;
+  if (controls) {
+    controls.enabled = true;
+  }
+  if (emitEnd) {
+    emit('flyEnd');
+  }
+}
+
+function updateRouteFlight(elapsed) {
+  if (!routeFlight) {
+    return;
+  }
+
+  const progress = THREE.MathUtils.clamp((elapsed - routeFlight.start) / routeFlight.duration, 0, 1);
+  const t = progress * progress * (3 - 2 * progress);
+  const lookT = Math.min(t + 0.035, 1);
+  const position = routeFlight.curve.getPointAt(t);
+  const lookAt = routeFlight.curve.getPointAt(lookT);
+  camera.position.set(position.x, position.y + 2.1, position.z);
+  controls.target.set(lookAt.x, lookAt.y + 0.6, lookAt.z);
+  camera.lookAt(controls.target);
+
+  const totalDistance = props.routePlan?.totalDistance || 0;
+  const progressDistance = t * totalDistance;
+  const stops = props.routePlan?.stops || [];
+  let stopIndex = 0;
+  stops.forEach((stop, index) => {
+    if (stop.distanceFromStart <= progressDistance + 1) {
+      stopIndex = index;
+    }
+  });
+  if (stopIndex !== routeFlight.lastStopIndex) {
+    routeFlight.lastStopIndex = stopIndex;
+    emit('flyProgress', stopIndex);
+  }
+
+  if (progress >= 1) {
+    stopRouteFlight(true);
+  }
 }
 
 function focusBuilding(id, mode = props.cameraMode) {
@@ -781,7 +888,7 @@ function focusBuilding(id, mode = props.cameraMode) {
 }
 
 function focusRoute() {
-  if (!props.route) {
+  if (!props.routePlan?.reachable) {
     return;
   }
 
@@ -824,18 +931,12 @@ function pushRoutePoint(points, x, y, z) {
 }
 
 function getRoutePoints() {
-  if (!props.route) {
-    return [];
-  }
-
-  const startBuilding = props.buildings.find((building) => building.id === props.route.start);
-  const endBuilding = props.buildings.find((building) => building.id === props.route.end);
-  if (!startBuilding || !endBuilding) {
+  if (!props.routePlan?.reachable || !props.routePlan.points?.length) {
     return [];
   }
 
   const y = 0.68;
-  return findCampusPath(startBuilding, endBuilding).map((point) => new THREE.Vector3(point.x, y, point.z));
+  return props.routePlan.points.map((point) => new THREE.Vector3(point.x, y, point.z));
 }
 
 function createRain() {
@@ -918,16 +1019,21 @@ function updateEnvironment() {
 }
 
 function updateRoute() {
+  stopRouteFlight(false);
+
   if (routeGroup) {
     scene.remove(routeGroup);
     routeGroup.traverse((child) => {
       child.geometry?.dispose();
+      if (child.material?.map) {
+        child.material.map.dispose();
+      }
       child.material?.dispose();
     });
     routeGroup = null;
   }
 
-  if (!props.route) {
+  if (!props.routePlan?.reachable) {
     return;
   }
 
@@ -938,10 +1044,12 @@ function updateRoute() {
 
   routeGroup = new THREE.Group();
   routeGroup.userData.pulses = [];
+  routeGroup.userData.stopMarkers = [];
   const startPoint = routePoints[0];
   const endPoint = routePoints.at(-1);
   const curve = new THREE.CatmullRomCurve3(routePoints, false, 'catmullrom', 0.08);
   routeGroup.userData.curve = curve;
+  routeGroup.userData.points = routePoints;
 
   const glowTube = new THREE.Mesh(
     new THREE.TubeGeometry(curve, 96, 0.22, 18, false),
@@ -1003,63 +1111,83 @@ function updateRoute() {
     routeGroup.add(arrow);
   }
 
-  routePoints.slice(1, -1).forEach((point, index) => {
-    const node = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.24, 0.24, 0.08, 24),
-      new THREE.MeshBasicMaterial({
-        color: index % 2 ? '#45ffc3' : '#31eaff',
-        transparent: true,
-        opacity: 0.84,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      })
-    );
-    node.position.copy(point);
-    node.position.y = 0.44;
-    node.userData.routeNode = true;
-    routeGroup.add(node);
+  (props.routePlan.stops || []).forEach((stop, index) => {
+    const building = props.buildings.find((item) => item.id === stop.id);
+    if (!building) {
+      return;
+    }
 
-    const beam = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.035, 0.1, 1.25, 14),
-      new THREE.MeshBasicMaterial({
-        color: '#50f2ff',
-        transparent: true,
-        opacity: 0.28,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      })
-    );
-    beam.position.copy(point);
-    beam.position.y = 1.06;
-    beam.userData.routeBeam = true;
-    routeGroup.add(beam);
-  });
+    const stopGroup = new THREE.Group();
+    stopGroup.position.set(building.position[0], 0.68, building.position[2]);
+    stopGroup.userData.stopIndex = index;
+    stopGroup.userData.stopType = stop.type;
 
-  [startPoint, endPoint].forEach((point) => {
+    const isWaypoint = stop.type === 'waypoint';
+    const markerColor = stop.type === 'start' ? '#39ffb6' : stop.type === 'end' ? '#ff9d5c' : '#31eaff';
     const marker = new THREE.Mesh(
-      new THREE.SphereGeometry(0.34, 28, 28),
+      new THREE.SphereGeometry(isWaypoint ? 0.26 : 0.34, 28, 28),
       new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.98 })
     );
-    marker.position.copy(point);
-    routeGroup.add(marker);
+    stopGroup.add(marker);
 
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.82, 0.045, 8, 48),
+      new THREE.TorusGeometry(isWaypoint ? 0.62 : 0.82, 0.045, 8, 48),
       new THREE.MeshBasicMaterial({
-        color: '#28eaff',
+        color: markerColor,
         transparent: true,
         opacity: 0.75,
         blending: THREE.AdditiveBlending,
         depthWrite: false
       })
     );
-    ring.position.copy(point);
     ring.rotation.x = Math.PI / 2;
     ring.userData.routeRing = true;
-    routeGroup.add(ring);
+    stopGroup.add(ring);
+
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.035, 0.1, isWaypoint ? 1.6 : 1.25, 14),
+      new THREE.MeshBasicMaterial({
+        color: markerColor,
+        transparent: true,
+        opacity: 0.28,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    beam.position.y = 0.62;
+    beam.userData.routeBeam = true;
+    stopGroup.add(beam);
+
+    if (isWaypoint) {
+      const label = createTextSprite(`${stop.name} · ${formatDistance(stop.distanceFromStart)}`);
+      label.position.set(0, 1.7, 0);
+      label.userData.isStopLabel = true;
+      stopGroup.add(label);
+    }
+
+    routeGroup.userData.stopMarkers.push(stopGroup);
+    routeGroup.add(stopGroup);
   });
 
   scene.add(routeGroup);
+  updateStopHighlight();
+}
+
+function updateStopHighlight() {
+  if (!routeGroup) {
+    return;
+  }
+
+  (routeGroup.userData.stopMarkers || []).forEach((stopGroup) => {
+    const isActive = stopGroup.userData.stopIndex === props.activeStopIndex;
+    stopGroup.userData.isActiveStop = isActive;
+    stopGroup.scale.setScalar(isActive ? 1.45 : 1);
+    stopGroup.children.forEach((child) => {
+      if (child.userData.routeRing && child.material) {
+        child.material.opacity = isActive ? 1 : 0.75;
+      }
+    });
+  });
 }
 
 function resize() {
@@ -1071,6 +1199,97 @@ function resize() {
   renderer.setSize(width, height, false);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
+}
+
+function heatMatchesFilter(buildingId) {
+  const info = props.crowd[buildingId];
+  if (!info) {
+    return false;
+  }
+
+  const { department, buildingId: filterBuildingId } = props.heatFilter || {};
+  if (filterBuildingId && filterBuildingId !== 'all' && filterBuildingId !== buildingId) {
+    return false;
+  }
+  if (department && department !== 'all' && info.department !== department) {
+    return false;
+  }
+  return true;
+}
+
+function updateHeatmap() {
+  if (heatmapGroup) {
+    scene.remove(heatmapGroup);
+    heatmapGroup.traverse((child) => {
+      child.geometry?.dispose();
+      if (child.material?.map) {
+        child.material.map.dispose();
+      }
+      child.material?.dispose();
+    });
+    heatmapGroup = null;
+  }
+  heatMeshes.length = 0;
+
+  if (!props.heatmapVisible) {
+    return;
+  }
+
+  heatmapGroup = new THREE.Group();
+  props.buildings.forEach((building) => {
+    const info = props.crowd[building.id];
+    if (!info || !heatMatchesFilter(building.id)) {
+      return;
+    }
+
+    const [width, , depth] = building.size;
+    const radius = Math.max(width, depth) * 0.62;
+    const columnHeight = 1.4 + info.ratio * 3.2;
+    const color = new THREE.Color(info.color);
+
+    const column = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius * 1.08, columnHeight, 28, 1, true),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.32,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      })
+    );
+    column.position.set(building.position[0], columnHeight / 2 + 0.1, building.position[2]);
+    column.userData.heatColumn = true;
+    column.userData.building = building;
+    column.userData.baseOpacity = 0.32;
+    heatmapGroup.add(column);
+    heatMeshes.push(column);
+
+    const disc = new THREE.Mesh(
+      new THREE.CircleGeometry(radius * 1.25, 36),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.2,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    disc.rotation.x = -Math.PI / 2;
+    disc.position.set(building.position[0], 0.16, building.position[2]);
+    disc.userData.heatDisc = true;
+    disc.userData.building = building;
+    disc.userData.baseOpacity = 0.2;
+    heatmapGroup.add(disc);
+    heatMeshes.push(disc);
+
+    const label = createTextSprite(`${building.name} ${info.people}人`);
+    label.position.set(building.position[0], columnHeight + 1.15, building.position[2]);
+    label.userData.isHeatLabel = true;
+    heatmapGroup.add(label);
+  });
+
+  scene.add(heatmapGroup);
 }
 
 function animate() {
@@ -1109,7 +1328,25 @@ function animate() {
           : 0.18 + Math.sin(elapsed * 2.6) * 0.1;
       }
     });
+
+    (routeGroup.userData.stopMarkers || []).forEach((stopGroup) => {
+      const pulse = stopGroup.userData.isActiveStop
+        ? 1.45 + Math.sin(elapsed * 5.2) * 0.18
+        : 1 + Math.sin(elapsed * 2.4 + stopGroup.userData.stopIndex) * 0.06;
+      stopGroup.scale.setScalar(pulse);
+    });
   }
+
+  if (heatmapGroup) {
+    heatmapGroup.children.forEach((child) => {
+      if (child.userData.heatColumn || child.userData.heatDisc) {
+        const base = child.userData.baseOpacity || 0.3;
+        child.material.opacity = base + Math.sin(elapsed * 2.2 + child.position.x) * base * 0.28;
+      }
+    });
+  }
+
+  updateRouteFlight(elapsed);
 
   if (orbitingBuildingId) {
     const group = buildingGroups.get(orbitingBuildingId);
@@ -1199,10 +1436,19 @@ onBeforeUnmount(() => {
 watch(() => props.activeCategory, updateCategoryVisibility);
 watch(() => [props.selectedBuildingId, props.focusedBuildingId], updateHighlights);
 watch(() => props.focusedBuildingId, (id) => focusBuilding(id));
-watch(() => props.route, updateRoute, { deep: true });
+watch(() => props.routePlan, updateRoute, { deep: true });
 watch(() => props.routeFocusKey, () => focusRoute());
 watch(() => props.cameraFocusKey, () => focusBuilding(props.selectedBuildingId, props.cameraMode));
 watch(() => props.sceneMode, updateEnvironment);
+watch(() => props.flying, (value) => {
+  if (value) {
+    startRouteFlight();
+  } else {
+    stopRouteFlight(true);
+  }
+});
+watch(() => props.activeStopIndex, updateStopHighlight);
+watch(() => [props.heatmapVisible, props.crowd, props.heatFilter], updateHeatmap, { deep: true });
 </script>
 
 <template>
