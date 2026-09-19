@@ -31,14 +31,14 @@ export function createPodium(width, depth, color = '#dbeaf5') {
   return podium;
 }
 
-export function addWindowGrid(group, width, height, depth) {
+export function addWindowGrid(group, width, height, depth, windowMaterial) {
   const rows = Math.max(2, Math.floor(height));
   const cols = Math.max(4, Math.floor(width * 1.35));
-  const windowMaterial = new THREE.MeshBasicMaterial({ color: '#e8fbff' });
+  const material = windowMaterial || new THREE.MeshBasicMaterial({ color: '#e8fbff' });
 
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
-      const windowMesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.28, 0.035), windowMaterial);
+      const windowMesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.28, 0.035), material);
       windowMesh.position.set(
         -width / 2 + 0.65 + col * (width - 1.3) / Math.max(1, cols - 1),
         0.8 + row * 0.72,

@@ -1,10 +1,19 @@
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CampusScene from './components/CampusScene.vue';
 import ControlPanel from './components/ControlPanel.vue';
 import InfoPanel from './components/InfoPanel.vue';
 import { campusBuildings, categoryNames, recommendedRoutes } from './mock/campusData';
 import { findCampusPath, toMiniMapPoint } from './utils/pathfinding';
+import { readAllStations } from './env/model.js';
+import { evaluateMetric } from './env/environment.js';
+import { useAlerts } from './env/useAlerts.js';
+import { usePersistentState } from './env/usePersistentState.js';
+import EnvironmentPanel from './components/env/EnvironmentPanel.vue';
+import WeatherPanel from './components/env/WeatherPanel.vue';
+import TimeAxisBar from './components/env/TimeAxisBar.vue';
+import AlertCenter from './components/env/AlertCenter.vue';
+import StationDetailCard from './components/env/StationDetailCard.vue';
 
 const activeCategory = ref('all');
 const selectedBuildingId = ref(campusBuildings[0].id);
@@ -14,10 +23,105 @@ const routeEndId = ref('library');
 const routeFocusKey = ref(0);
 const cameraMode = ref('near');
 const cameraFocusKey = ref(0);
-const sceneMode = ref('day');
 const cameraHeading = ref(45);
 const panoramaMode = ref(false);
 let buildingSelectTimer;
+
+const envPrefs = usePersistentState('campus-env-prefs-v1', {
+  weather: 'sunny',
+  timeHours: 12,
+  region: 'all',
+  metric: 'aqi',
+  layerVisible: true
+});
+const weather = computed({
+  get: () => envPrefs.value.weather,
+  set: (value) => { envPrefs.value.weather = value; }
+});
+const timeHours = computed({
+  get: () => envPrefs.value.timeHours,
+  set: (value) => { envPrefs.value.timeHours = value; }
+});
+const monitorRegion = computed({
+  get: () => envPrefs.value.region,
+  set: (value) => { envPrefs.value.region = value; }
+});
+const monitorMetric = computed({
+  get: () => envPrefs.value.metric,
+  set: (value) => { envPrefs.value.metric = value; }
+});
+const layerVisible = computed({
+  get: () => envPrefs.value.layerVisible,
+  set: (value) => { envPrefs.value.layerVisible = value; }
+});
+
+const timePlaying = ref(false);
+const selectedStationId = ref('');
+
+const stationSnapshots = computed(() => readAllStations(timeHours.value, weather.value));
+
+const clockText = computed(() => {
+  const totalMinutes = Math.round(timeHours.value * 60);
+  return `${String(Math.floor(totalMinutes / 60) % 24).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
+});
+
+const weatherText = computed(() => ({ sunny: '晴', rain: '雨', fog: '雾', snow: '雪' }[weather.value]));
+
+const { activeAlerts, pendingCount, handleAlert, undoAlert, handleAll } = useAlerts(
+  stationSnapshots,
+  clockText,
+  weatherText
+);
+
+const visibleStationSnapshots = computed(() => {
+  if (!layerVisible.value) {
+    return [];
+  }
+  return stationSnapshots.value.filter(
+    ({ station }) => monitorRegion.value === 'all' || station.region === monitorRegion.value
+  );
+});
+
+const selectedStationSnapshot = computed(() => {
+  if (!selectedStationId.value) {
+    return null;
+  }
+  return stationSnapshots.value.find(({ station }) => station.id === selectedStationId.value) || null;
+});
+
+function handleStationSelect(stationId) {
+  selectedStationId.value = stationId;
+}
+
+function closeStationCard() {
+  selectedStationId.value = '';
+}
+
+function selectStationMetric(metricKey) {
+  monitorMetric.value = metricKey;
+}
+
+function locateAlert(alert) {
+  selectedStationId.value = alert.stationId;
+  monitorRegion.value = 'all';
+}
+
+let timePlayTimer;
+
+onMounted(() => {
+  timePlayTimer = window.setInterval(() => {
+    if (!timePlaying.value) {
+      return;
+    }
+    timeHours.value = (timeHours.value + 0.1) % 24;
+  }, 240);
+});
+
+watch(selectedStationId, (id) => {
+  if (id && !layerVisible.value) {
+    layerVisible.value = true;
+  }
+});
 
 const selectedBuilding = computed(() => {
   return campusBuildings.find((building) => building.id === selectedBuildingId.value) || campusBuildings[0];
@@ -99,6 +203,22 @@ const mapBuildings = computed(() => {
   }));
 });
 
+const mapStations = computed(() => {
+  return stationSnapshots.value.map(({ station, readings }) => {
+    const result = evaluateMetric(monitorMetric.value, readings[monitorMetric.value]);
+    return {
+      id: station.id,
+      name: station.name,
+      region: station.region,
+      levelLabel: result.levelLabel,
+      color: result.color,
+      exceeded: result.exceeded,
+      mapX: ((station.position[0] + 22) / 44) * 100,
+      mapY: ((station.position[2] + 17) / 34) * 100
+    };
+  });
+});
+
 function handleBuildingSelect(building) {
   const previousBuildingId = selectedBuildingId.value;
   focusedBuildingId.value = building.id;
@@ -145,6 +265,7 @@ function handleCameraState(state) {
 
 onBeforeUnmount(() => {
   window.clearTimeout(buildingSelectTimer);
+  window.clearInterval(timePlayTimer);
 });
 </script>
 
@@ -158,9 +279,16 @@ onBeforeUnmount(() => {
       :route-focus-key="routeFocusKey"
       :camera-mode="cameraMode"
       :camera-focus-key="cameraFocusKey"
-      :scene-mode="sceneMode"
       :route="route"
+      :weather="weather"
+      :time-hours="timeHours"
+      :layer-visible="layerVisible"
+      :monitor-region="monitorRegion"
+      :monitor-metric="monitorMetric"
+      :station-data="stationSnapshots"
+      :selected-station-id="selectedStationId"
       @select-building="handleBuildingSelect"
+      @select-station="handleStationSelect"
       @camera-state="handleCameraState"
     />
 
@@ -184,9 +312,20 @@ onBeforeUnmount(() => {
       <div class="system-status">
         <span>WebGL 在线</span>
         <span>Three.js 场景同步</span>
-        <strong>17:38</strong>
+        <span>{{ weatherText }} · 监测{{ stationSnapshots.length }}点</span>
+        <strong>{{ clockText }}</strong>
       </div>
     </header>
+
+    <AlertCenter
+      :alerts="activeAlerts"
+      :pending-count="pendingCount"
+      :selected-station-id="selectedStationId"
+      @handle="handleAlert"
+      @undo="undoAlert"
+      @handle-all="handleAll"
+      @locate="locateAlert"
+    />
 
     <ControlPanel
       v-model:category="activeCategory"
@@ -200,6 +339,14 @@ onBeforeUnmount(() => {
     />
 
     <aside class="left-hud">
+      <EnvironmentPanel
+        v-model:layer-visible="layerVisible"
+        v-model:region="monitorRegion"
+        v-model:metric="monitorMetric"
+        :snapshots="stationSnapshots"
+        :visible-count="visibleStationSnapshots.length"
+      />
+
       <section class="glass-panel traffic-panel">
         <div class="panel-heading">
           <span>校园访问趋势</span>
@@ -269,17 +416,7 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section class="glass-panel scene-mode-panel">
-        <div class="panel-heading">
-          <span>场景氛围</span>
-          <b>{{ sceneMode }}</b>
-        </div>
-        <div class="camera-actions">
-          <button :class="{ active: sceneMode === 'day' }" type="button" @click="sceneMode = 'day'">白天</button>
-          <button :class="{ active: sceneMode === 'night' }" type="button" @click="sceneMode = 'night'">夜景</button>
-          <button :class="{ active: sceneMode === 'rain' }" type="button" @click="sceneMode = 'rain'">雨天</button>
-        </div>
-      </section>
+      <WeatherPanel v-model:weather="weather" :time-hours="timeHours" />
 
       <section class="glass-panel">
         <div class="panel-heading">
@@ -323,6 +460,15 @@ onBeforeUnmount(() => {
           <polyline :points="miniMapPolyline"></polyline>
         </svg>
         <i class="camera-heading" :style="{ transform: `translate(-50%, -50%) rotate(${cameraHeading}deg)` }"></i>
+        <i
+          v-for="item in mapStations"
+          :key="item.id"
+          class="map-station"
+          :class="{ active: selectedStationId === item.id, hidden: !layerVisible || (monitorRegion !== 'all' && monitorRegion !== item.region) }"
+          :style="{ left: `${item.mapX}%`, top: `${item.mapY}%`, '--station-color': item.color }"
+          :title="`${item.name} ${item.levelLabel}`"
+          @click="handleStationSelect(item.id)"
+        ></i>
         <button
           v-for="building in mapBuildings"
           :key="building.id"
@@ -334,5 +480,23 @@ onBeforeUnmount(() => {
         ></button>
       </div>
     </section>
+
+    <Transition name="station-pop">
+      <StationDetailCard
+        v-if="selectedStationSnapshot"
+        :station="selectedStationSnapshot.station"
+        :readings="selectedStationSnapshot.readings"
+        :time-hours="timeHours"
+        :weather="weather"
+        :active-metric="monitorMetric"
+        @close="closeStationCard"
+        @select-metric="selectStationMetric"
+      />
+    </Transition>
+
+    <TimeAxisBar
+      v-model:time-hours="timeHours"
+      v-model:playing="timePlaying"
+    />
   </main>
 </template>

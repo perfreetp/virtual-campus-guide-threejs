@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { addWindowGrid, createBuildingMaterial, createPodium, createRoof } from '../three/builders/primitives';
 import { findCampusPath } from '../utils/pathfinding';
+import { evaluateMetric } from '../env/environment.js';
 
 const props = defineProps({
   buildings: {
@@ -41,10 +42,38 @@ const props = defineProps({
   route: {
     type: Object,
     default: null
+  },
+  weather: {
+    type: String,
+    default: 'sunny'
+  },
+  timeHours: {
+    type: Number,
+    default: 12
+  },
+  layerVisible: {
+    type: Boolean,
+    default: true
+  },
+  monitorRegion: {
+    type: String,
+    default: 'all'
+  },
+  monitorMetric: {
+    type: String,
+    default: 'aqi'
+  },
+  stationData: {
+    type: Array,
+    default: () => []
+  },
+  selectedStationId: {
+    type: String,
+    default: ''
   }
 });
 
-const emit = defineEmits(['selectBuilding', 'cameraState']);
+const emit = defineEmits(['selectBuilding', 'cameraState', 'selectStation']);
 
 const canvasHost = ref(null);
 let renderer;
@@ -59,11 +88,34 @@ let routeGroup;
 let pointerDownPosition = null;
 let orbitingBuildingId = '';
 let hoveredBuildingId = '';
+let hoveredStationId = '';
 let cameraFlight = null;
 let ambientLight;
 let sunLight;
 let fillLight;
 let rainGroup;
+let skyDome;
+let sunSprite;
+let moonSprite;
+let starField;
+let hemisphereLight;
+let groundMaterial;
+let roadMaterial;
+let snowGround;
+let wetGroup;
+let polePointLights = [];
+let poleLampMaterials = [];
+let stationLayer;
+const stationMarkers = new Map();
+let snowSystem;
+let currentWetness = 0;
+let currentSnow = 0;
+let currentNight = 0;
+let currentDusk = 0;
+let currentFogAmount = 0;
+const wetMaterials = new Set();
+const buildingWindowMaterials = [];
+const buildingSnowMaterials = new Map();
 let frameCount = 0;
 const buildingGroups = new Map();
 const interactiveMeshes = [];
@@ -158,6 +210,8 @@ function addBlockBuilding(group, building) {
   const [width, height, depth] = building.size;
   const palette = getPalette(building);
   const material = createBuildingMaterial(palette.body);
+  material.userData.moodBuildingId = building.id;
+  wetMaterials.add(material);
   const blockCount = building.shape === 'residence' ? 3 : building.shape === 'terrace' ? 2 : 1;
   for (let block = 0; block < blockCount; block += 1) {
     const blockWidth = blockCount > 1 ? width / blockCount - 0.22 : width;
@@ -197,9 +251,68 @@ function addBlockBuilding(group, building) {
   belt.position.y = Math.max(1.05, height * 0.58);
   group.add(belt);
 
-  group.add(createRoof(width, height, depth, palette.roof));
-  addWindowGrid(group, width, height, depth);
-  group.add(createPodium(width, depth, palette.podium));
+  const roofMaterial = new THREE.MeshStandardMaterial({
+    color: palette.roof,
+    metalness: 0.22,
+    roughness: 0.34
+  });
+  roofMaterial.userData.moodSnow = true;
+  roofMaterial.userData.moodBuildingId = building.id;
+  const roof = createRoof(width, height, depth, palette.roof);
+  roof.material = roofMaterial;
+  group.add(roof);
+
+  const podiumMaterial = new THREE.MeshStandardMaterial({
+    color: palette.podium,
+    metalness: 0.18,
+    roughness: 0.42
+  });
+  podiumMaterial.userData.moodSnow = true;
+  podiumMaterial.userData.moodBuildingId = building.id;
+  const podium = createPodium(width, depth, palette.podium);
+  podium.material = podiumMaterial;
+  group.add(podium);
+
+  addBuildingWindows(group, building, width, height, depth);
+  buildingSnowMaterials.set(building.id, [roofMaterial, podiumMaterial]);
+}
+
+function addBuildingWindows(group, building, width, height, depth) {
+  const rows = Math.max(2, Math.floor(height));
+  const cols = Math.max(4, Math.floor(width * 1.35));
+  const litMaterial = new THREE.MeshStandardMaterial({
+    color: '#0e2636',
+    emissive: '#ffcf82',
+    emissiveIntensity: 0,
+    metalness: 0.35,
+    roughness: 0.25
+  });
+  const darkMaterial = new THREE.MeshStandardMaterial({
+    color: '#0a2230',
+    emissive: '#264a66',
+    emissiveIntensity: 0,
+    metalness: 0.35,
+    roughness: 0.3
+  });
+  let seed = 0;
+  building.id.split('').forEach((char) => { seed += char.charCodeAt(0); });
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const isLit = ((seed + row * 7 + col * 13) % 10) < 7;
+      const material = isLit ? litMaterial : darkMaterial;
+      const windowMesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.28, 0.035), material);
+      windowMesh.position.set(
+        -width / 2 + 0.65 + col * (width - 1.3) / Math.max(1, cols - 1),
+        0.8 + row * 0.72,
+        depth / 2 + 0.025
+      );
+      windowMesh.userData.isWindow = true;
+      group.add(windowMesh);
+    }
+  }
+  buildingWindowMaterials.push({ material: litMaterial, buildingId: building.id });
+  buildingWindowMaterials.push({ material: darkMaterial, buildingId: building.id });
 }
 
 function addDomeBuilding(group, building) {
@@ -212,6 +325,8 @@ function addDomeBuilding(group, building) {
     emissive: '#063f66',
     emissiveIntensity: 0.08
   });
+  baseMaterial.userData.moodBuildingId = building.id;
+  wetMaterials.add(baseMaterial);
   const base = new THREE.Mesh(new THREE.CylinderGeometry(width / 2, width / 2, height * 0.7, 28), baseMaterial);
   base.scale.z = depth / width;
   base.position.y = height * 0.35;
@@ -297,6 +412,8 @@ function addAuditorium(group, building) {
     emissive: '#073b61',
     emissiveIntensity: 0.06
   });
+  bodyMaterial.userData.moodBuildingId = building.id;
+  wetMaterials.add(bodyMaterial);
   const body = new THREE.Mesh(new THREE.BoxGeometry(width, height * 0.65, depth), bodyMaterial);
   body.position.y = height * 0.32;
   body.castShadow = true;
@@ -331,6 +448,8 @@ function addClockTower(group, building) {
     emissive: '#073b61',
     emissiveIntensity: 0.08
   });
+  towerMaterial.userData.moodBuildingId = building.id;
+  wetMaterials.add(towerMaterial);
   const base = new THREE.Mesh(new THREE.BoxGeometry(width, height * 0.78, depth), towerMaterial);
   base.position.y = height * 0.39;
   base.castShadow = true;
@@ -393,6 +512,8 @@ function addGate(group, building) {
     emissive: '#0a3a66',
     emissiveIntensity: 0.08
   });
+  material.userData.moodBuildingId = building.id;
+  wetMaterials.add(material);
   const pillarGeometry = new THREE.BoxGeometry(0.7, building.size[1], 0.8);
   [-1.9, 1.9].forEach((x) => {
     const pillar = new THREE.Mesh(pillarGeometry, material);
@@ -461,9 +582,10 @@ function roundRect(context, x, y, width, height, radius) {
 }
 
 function createCampusBase() {
+  groundMaterial = new THREE.MeshStandardMaterial({ color: '#d8edf5', roughness: 0.74, metalness: 0.03 });
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(44, 34),
-    new THREE.MeshStandardMaterial({ color: '#d8edf5', roughness: 0.74, metalness: 0.03 })
+    groundMaterial
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -486,7 +608,7 @@ function createCampusBase() {
     scene.add(mesh);
   });
 
-  const roadMaterial = new THREE.MeshBasicMaterial({ color: '#9db6c4', transparent: true, opacity: 0.95 });
+  roadMaterial = new THREE.MeshStandardMaterial({ color: '#8fa8b7', roughness: 0.82, metalness: 0.04 });
   const roads = [
     { size: [38, 0.04, 1.1], position: [0, 0.04, 2.5] },
     { size: [34, 0.04, 0.78], position: [1.5, 0.05, -7.3] },
@@ -497,8 +619,12 @@ function createCampusBase() {
   roads.forEach((road) => {
     const roadMesh = new THREE.Mesh(new THREE.BoxGeometry(...road.size), roadMaterial);
     roadMesh.position.set(...road.position);
+    roadMesh.receiveShadow = true;
     scene.add(roadMesh);
   });
+
+  addWetPuddles();
+  addSnowGround();
 
   const plaza = new THREE.Mesh(
     new THREE.CylinderGeometry(3.1, 3.1, 0.04, 48),
@@ -579,7 +705,18 @@ function addTreeRows() {
 
 function addLightPoles() {
   const poleMaterial = new THREE.MeshBasicMaterial({ color: '#dffbff' });
-  const lightMaterial = new THREE.MeshBasicMaterial({ color: '#44edff' });
+  const lightMaterial = new THREE.MeshBasicMaterial({ color: '#3a5a70', transparent: true, opacity: 0.9 });
+  poleLampMaterials.push(lightMaterial);
+  const glowMaterial = new THREE.MeshBasicMaterial({
+    color: '#ffd98a',
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  poleLampMaterials.push(glowMaterial);
+  const litPointIndices = new Set([0, 5, 14, 23]);
+  let poleIndex = 0;
   [-13, -7, -1, 5, 11, 17].forEach((x) => {
     [-9.2, 5.2].forEach((z) => {
       const pole = new THREE.Group();
@@ -587,11 +724,66 @@ function addLightPoles() {
       stem.position.y = 0.6;
       const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 12), lightMaterial);
       lamp.position.y = 1.28;
-      pole.add(stem, lamp);
+      const glow = new THREE.Mesh(new THREE.SphereGeometry(0.34, 14, 14), glowMaterial);
+      glow.position.y = 1.26;
+      pole.add(stem, lamp, glow);
+      if (litPointIndices.has(poleIndex)) {
+        const point = new THREE.PointLight('#ffd28a', 0, 11, 2);
+        point.position.set(x, 1.5, z);
+        scene.add(point);
+        polePointLights.push(point);
+      }
       pole.position.set(x, 0, z);
       scene.add(pole);
+      poleIndex += 1;
     });
   });
+}
+
+function addWetPuddles() {
+  wetGroup = new THREE.Group();
+  const puddleMaterial = new THREE.MeshStandardMaterial({
+    color: '#9fd4ef',
+    metalness: 0.92,
+    roughness: 0.05,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false
+  });
+  const puddles = [
+    { x: -6, z: 2.7, sx: 2.6, sz: 0.42, rot: 0.04 },
+    { x: 5, z: 2.6, sx: 3.1, sz: 0.5, rot: -0.05 },
+    { x: 1.4, z: -3.4, sx: 0.55, sz: 2.4, rot: 0 },
+    { x: -9.6, z: -4.2, sx: 0.44, sz: 2.2, rot: 0 },
+    { x: 11.8, z: -3.2, sx: 0.44, sz: 2.6, rot: 0 },
+    { x: -11.6, z: 8.2, sx: 1.8, sz: 0.5, rot: 0.12 },
+    { x: 1.8, z: 8.8, sx: 1.6, sz: 0.46, rot: -0.1 }
+  ];
+  puddles.forEach((puddle) => {
+    const mesh = new THREE.Mesh(new THREE.CircleGeometry(1, 36), puddleMaterial);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.rotation.z = puddle.rot;
+    mesh.scale.set(puddle.sx, puddle.sz, 1);
+    mesh.position.set(puddle.x, 0.075, puddle.z);
+    wetGroup.add(mesh);
+  });
+  scene.add(wetGroup);
+}
+
+function addSnowGround() {
+  const snowMaterial = new THREE.MeshStandardMaterial({
+    color: '#f6faff',
+    roughness: 0.85,
+    metalness: 0,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false
+  });
+  snowGround = new THREE.Mesh(new THREE.PlaneGeometry(43.5, 33.5), snowMaterial);
+  snowGround.rotation.x = -Math.PI / 2;
+  snowGround.position.y = 0.045;
+  snowGround.receiveShadow = true;
+  scene.add(snowGround);
 }
 
 function setupScene() {
@@ -622,22 +814,34 @@ function setupScene() {
   ambientLight = new THREE.AmbientLight('#d7f5ff', 1.55);
   scene.add(ambientLight);
 
+  hemisphereLight = new THREE.HemisphereLight('#bfe8ff', '#2a3344', 0.55);
+  scene.add(hemisphereLight);
+
   sunLight = new THREE.DirectionalLight('#ffffff', 2.9);
   sunLight.position.set(8, 14, 10);
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(2048, 2048);
+  sunLight.shadow.camera.left = -26;
+  sunLight.shadow.camera.right = 26;
+  sunLight.shadow.camera.top = 22;
+  sunLight.shadow.camera.bottom = -22;
   scene.add(sunLight);
 
   fillLight = new THREE.PointLight('#29d7ff', 22, 48);
   fillLight.position.set(-12, 8, 8);
   scene.add(fillLight);
 
+  createSkyDome();
+  createCelestialBodies();
+  createWeatherParticles();
   createCampusBase();
   props.buildings.forEach(createBuilding);
+  createStationLayer();
   updateCategoryVisibility();
   updateHighlights();
   updateRoute();
-  updateEnvironment();
+  updateStationVisuals(true);
+  updateEnvironment(true);
 }
 
 function handlePointerDown(event) {
@@ -666,12 +870,38 @@ function handlePointerUp(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObjects(interactiveMeshes, false);
-  if (!hits.length) {
+  const stationCores = interactiveMeshes.filter((mesh) => mesh.userData.stationCore);
+  const stationHits = raycaster.intersectObjects(stationCores, false).filter((hit) => {
+    let node = hit.object;
+    while (node) {
+      if (node.visible === false) {
+        return false;
+      }
+      node = node.parent;
+    }
+    return true;
+  });
+  if (stationHits.length) {
+    emit('selectStation', stationHits[0].object.userData.stationId);
     return;
   }
 
-  const building = hits[0].object.userData.building;
+  const buildingMeshes = interactiveMeshes.filter((mesh) => !mesh.userData.stationCore);
+  const buildingHits = raycaster.intersectObjects(buildingMeshes, false).filter((hit) => {
+    let node = hit.object;
+    while (node) {
+      if (node.visible === false) {
+        return false;
+      }
+      node = node.parent;
+    }
+    return true;
+  });
+  if (!buildingHits.length) {
+    return;
+  }
+
+  const building = buildingHits[0].object.userData.building;
   if (building) {
     emit('selectBuilding', building);
   }
@@ -687,13 +917,16 @@ function handlePointerMove(event) {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObjects(interactiveMeshes, false);
+  const station = hits[0]?.object.userData.stationCore ? hits[0].object.userData.stationId : '';
   const building = hits[0]?.object.userData.building;
+  hoveredStationId = station;
   hoveredBuildingId = building?.id || '';
-  renderer.domElement.style.cursor = building ? 'pointer' : 'grab';
+  renderer.domElement.style.cursor = building || station ? 'pointer' : 'grab';
 }
 
 function handlePointerLeave() {
   hoveredBuildingId = '';
+  hoveredStationId = '';
   if (renderer?.domElement) {
     renderer.domElement.style.cursor = 'grab';
   }
@@ -724,12 +957,19 @@ function updateHighlights() {
           child.material.emissive.set('#2bbcff');
           child.material.emissiveIntensity = 0.55;
         }
-      } else if (child.userData.baseColor) {
+      } else if (
+        child.userData.baseColor
+        && !child.userData.isWindow
+        && !wetMaterials.has(child.material)
+        && !child.material.userData.moodSnow
+      ) {
         child.material.color.copy(child.userData.baseColor);
         if (child.material.emissive && child.userData.baseEmissive) {
           child.material.emissive.copy(child.userData.baseEmissive);
           child.material.emissiveIntensity = 0.05;
         }
+      } else if (wetMaterials.has(child.material) && child.material.userData.baseMoodColor) {
+        child.material.color.copy(child.material.userData.baseMoodColor);
       }
     });
   });
@@ -838,84 +1078,255 @@ function getRoutePoints() {
   return findCampusPath(startBuilding, endBuilding).map((point) => new THREE.Vector3(point.x, y, point.z));
 }
 
-function createRain() {
-  const rain = new THREE.Group();
-  const material = new THREE.LineBasicMaterial({
-    color: '#9feaff',
-    transparent: true,
-    opacity: 0.34
-  });
-
-  for (let i = 0; i < 120; i += 1) {
-    const x = THREE.MathUtils.randFloatSpread(42);
-    const z = THREE.MathUtils.randFloatSpread(32);
-    const y = THREE.MathUtils.randFloat(3, 16);
-    const geometry = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(x, y, z),
-      new THREE.Vector3(x - 0.18, y - 0.8, z + 0.08)
-    ]);
-    const line = new THREE.Line(geometry, material);
-    line.userData.speed = THREE.MathUtils.randFloat(0.08, 0.18);
-    rain.add(line);
-  }
-
-  return rain;
+function sunDirectionAt(hour) {
+  const angle = ((hour - 6) / 12) * Math.PI;
+  const direction = new THREE.Vector3(Math.cos(angle), Math.sin(angle), 0.34);
+  direction.normalize();
+  return direction;
 }
 
-function updateEnvironment() {
-  if (!scene || !ambientLight || !sunLight || !fillLight) {
+function getEnvironmentTargets() {
+  const hour = ((props.timeHours % 24) + 24) % 24;
+  const sunDirection = sunDirectionAt(hour);
+  const elevation = sunDirection.y;
+  const dayFactor = THREE.MathUtils.smoothstep(elevation, -0.02, 0.2);
+  const nightFactor = 1 - dayFactor;
+  const horizonGlow = THREE.MathUtils.clamp(1 - Math.abs(elevation - 0.05) / 0.3, 0, 1);
+  const nearSunrise = hour >= 4.8 && hour <= 8.2;
+  const nearSunset = hour >= 16.4 && hour <= 20;
+  const duskFactor = horizonGlow * (nearSunrise || nearSunset ? 1 : 0.25);
+
+  const weatherPresets = {
+    sunny: { overcast: 0, wetness: 0, snow: 0, fog: 0, rain: 0, snowfall: 0 },
+    rain: { overcast: 0.85, wetness: 1, snow: 0, fog: 0.45, rain: 1, snowfall: 0 },
+    fog: { overcast: 0.55, wetness: 0.32, snow: 0, fog: 1, rain: 0, snowfall: 0 },
+    snow: { overcast: 0.62, wetness: 0.34, snow: 1, fog: 0.5, rain: 0, snowfall: 1 }
+  };
+  const preset = weatherPresets[props.weather] || weatherPresets.sunny;
+
+  return { hour, sunDirection, elevation, dayFactor, nightFactor, duskFactor, ...preset };
+}
+
+function approach(current, target, delta, speed) {
+  return current + (target - current) * Math.min(1, delta * speed);
+}
+
+function updateEnvironment(force = false, delta = 0.016) {
+  if (!scene || !ambientLight || !sunLight) {
     return;
   }
 
-  const modes = {
-    day: {
-      background: '#0a1726',
-      fog: '#0a1726',
-      ambient: 1.55,
-      sun: 2.9,
-      fill: 22
-    },
-    night: {
-      background: '#020916',
-      fog: '#020916',
-      ambient: 0.72,
-      sun: 0.85,
-      fill: 34
-    },
-    rain: {
-      background: '#07111d',
-      fog: '#07111d',
-      ambient: 1.05,
-      sun: 1.35,
-      fill: 28
+  const target = getEnvironmentTargets();
+  currentWetness = force ? target.wetness : approach(currentWetness, target.wetness, delta, 2.1);
+  currentSnow = force ? target.snow : approach(currentSnow, target.snow, delta, 2.1);
+  currentNight = force ? target.nightFactor : approach(currentNight, target.nightFactor, delta, 2.4);
+  currentDusk = force ? target.duskFactor : approach(currentDusk, target.duskFactor, delta, 2.4);
+  currentFogAmount = force ? target.fog : approach(currentFogAmount, target.fog, delta, 1.7);
+
+  const overcast = target.overcast;
+  const dayColorTop = new THREE.Color('#2a7fd1').lerp(new THREE.Color('#5b6f80'), overcast);
+  const dayColorHorizon = new THREE.Color('#bfe9ff').lerp(new THREE.Color('#96a7b5'), overcast);
+  const duskColor = new THREE.Color('#e8783f');
+
+  const skyTop = dayColorTop.clone().lerp(duskColor, currentDusk * 0.35);
+  const skyHorizon = dayColorHorizon.clone().lerp(new THREE.Color('#ffb072'), currentDusk * 0.6);
+  if (skyDome) {
+    skyDome.material.uniforms.uTop.value.copy(skyTop);
+    skyDome.material.uniforms.uHorizon.value.copy(skyHorizon);
+    skyDome.material.uniforms.uNight.value = currentNight;
+    skyDome.material.uniforms.uDusk.value = currentDusk;
+    skyDome.position.copy(camera.position);
+  }
+
+  const fogColor = skyHorizon.clone().lerp(new THREE.Color('#0a1428'), currentNight * 0.82);
+  scene.background = fogColor;
+  const fogFar = THREE.MathUtils.lerp(86, 24, currentFogAmount) * THREE.MathUtils.lerp(1, 0.82, currentNight * 0.4);
+  const fogNear = THREE.MathUtils.lerp(34, 5, currentFogAmount);
+  if (!scene.fog) {
+    scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
+  } else {
+    scene.fog.color.copy(fogColor);
+    scene.fog.near = fogNear;
+    scene.fog.far = fogFar;
+  }
+
+  ambientLight.intensity = force ? target.dayFactor * 0.9 + currentNight * 0.3 : approach(
+    ambientLight.intensity,
+    target.dayFactor * THREE.MathUtils.lerp(0.9, 1.25, overcast) + currentNight * 0.3,
+    delta,
+    2.4
+  );
+  ambientLight.color.copy(new THREE.Color('#d7f0ff').lerp(new THREE.Color('#cdd6e8'), overcast).lerp(new THREE.Color('#3d5680'), currentNight * 0.65));
+
+  if (hemisphereLight) {
+    hemisphereLight.intensity = approach(hemisphereLight.intensity, 0.35 + target.dayFactor * 0.35 + currentNight * 0.12, delta, 2.4);
+  }
+
+  const sunHeight = Math.max(target.elevation, 0);
+  const sunIntensity = target.dayFactor * THREE.MathUtils.lerp(2.7, 0.75, overcast);
+  sunLight.intensity = approach(sunLight.intensity, sunIntensity, delta, 2.6);
+  sunLight.position.copy(target.sunDirection).multiplyScalar(30);
+  const noonColor = new THREE.Color('#ffffff').lerp(new THREE.Color('#cfd9e6'), overcast * 0.8);
+  const warmSun = new THREE.Color('#ffb36b');
+  sunLight.color.copy(noonColor.lerp(warmSun, currentDusk * 0.7));
+  sunLight.target?.updateMatrixWorld();
+
+  if (fillLight) {
+    fillLight.intensity = approach(fillLight.intensity, 16 + currentNight * 16 + currentWetness * 6, delta, 2.4);
+    fillLight.color.set(currentNight > 0.5 ? '#5a86ff' : '#29d7ff');
+  }
+
+  updateWetAndSnowMaterials();
+  updateNightLighting(delta);
+  updateCelestialVisuals(target, fogColor);
+  updateWeatherParticles(target, delta);
+}
+
+function updateWetAndSnowMaterials() {
+  const wetness = currentWetness;
+  const snow = currentSnow;
+  const selectedId = props.selectedBuildingId;
+  const focusedId = props.focusedBuildingId;
+
+  const dryGround = new THREE.Color('#d8edf5');
+  const wetGround = new THREE.Color('#8694a0');
+  const groundTarget = dryGround.clone().lerp(wetGround, wetness).lerp(new THREE.Color('#f6faff'), snow * 0.88);
+  groundMaterial.color.copy(groundTarget);
+  groundMaterial.roughness = THREE.MathUtils.lerp(0.74, 0.14, wetness) + snow * 0.6;
+  groundMaterial.metalness = THREE.MathUtils.lerp(0.03, 0.35, wetness);
+
+  const dryRoad = new THREE.Color('#8fa8b7');
+  const wetRoad = new THREE.Color('#394755');
+  roadMaterial.color.copy(dryRoad.clone().lerp(wetRoad, wetness).lerp(new THREE.Color('#eef4fa'), snow * 0.8));
+  roadMaterial.roughness = THREE.MathUtils.lerp(0.82, 0.1, wetness) + snow * 0.55;
+  roadMaterial.metalness = THREE.MathUtils.lerp(0.04, 0.6, wetness);
+
+  wetGroup.children.forEach((puddle) => {
+    puddle.material.opacity = wetness * 0.8 * (1 - snow * 0.7);
+  });
+  if (snowGround) {
+    snowGround.material.opacity = snow * 0.96;
+  }
+
+  wetMaterials.forEach((material) => {
+    const ownerId = material.userData.moodBuildingId;
+    if (ownerId === selectedId || ownerId === focusedId) {
+      return;
     }
-  };
-  const mode = modes[props.sceneMode] || modes.day;
-
-  scene.background = new THREE.Color(mode.background);
-  scene.fog = new THREE.Fog(mode.fog, 18, props.sceneMode === 'rain' ? 38 : 58);
-  ambientLight.intensity = mode.ambient;
-  sunLight.intensity = mode.sun;
-  fillLight.intensity = mode.fill;
-  fillLight.color.set(props.sceneMode === 'night' ? '#16d8ff' : '#29d7ff');
-
-  buildingGroups.forEach((group) => {
-    group.traverse((child) => {
-      if (child.isMesh && child.material?.emissive) {
-        child.material.emissiveIntensity = props.sceneMode === 'night' ? 0.22 : 0.05;
-      }
-    });
+    const base = material.userData.baseMoodColor || material.color.clone();
+    if (!material.userData.baseMoodColor) {
+      material.userData.baseMoodColor = base;
+    }
+    const wet = base.clone().multiplyScalar(1 - wetness * 0.3);
+    material.color.copy(wet.lerp(new THREE.Color('#eef4fb'), snow * 0.14));
+    material.roughness = THREE.MathUtils.lerp(0.45, 0.07, wetness);
+    material.metalness = THREE.MathUtils.lerp(0.18, 0.62, wetness);
   });
 
-  if (props.sceneMode === 'rain' && !rainGroup) {
-    rainGroup = createRain();
-    scene.add(rainGroup);
-  } else if (props.sceneMode !== 'rain' && rainGroup) {
-    scene.remove(rainGroup);
-    rainGroup.traverse((child) => child.geometry?.dispose());
-    rainGroup = null;
+  buildingSnowMaterials.forEach((materials, buildingId) => {
+    materials.forEach((material) => {
+      if (buildingId === selectedId || buildingId === focusedId) {
+        return;
+      }
+      const base = material.userData.baseMoodColor || material.color.clone();
+      if (!material.userData.baseMoodColor) {
+        material.userData.baseMoodColor = base;
+      }
+      material.color.copy(base.clone().lerp(new THREE.Color('#f5f9ff'), snow * 0.92));
+      material.roughness = 0.34 + snow * 0.5;
+    });
+  });
+}
+
+function updateNightLighting(delta) {
+  const night = currentNight;
+  const warmGlow = night * 1.5 + currentDusk * 0.65;
+
+  buildingWindowMaterials.forEach(({ material, buildingId }) => {
+    if (buildingId === props.selectedBuildingId || buildingId === props.focusedBuildingId) {
+      return;
+    }
+    if (material.emissive.getHex() === new THREE.Color('#ffcf82').getHex()) {
+      material.emissiveIntensity = warmGlow;
+    } else {
+      material.emissiveIntensity = night * 0.14;
+    }
+  });
+
+  const [poleMaterial, glowMaterial] = poleLampMaterials;
+  if (poleMaterial) {
+    poleMaterial.color.copy(new THREE.Color('#3a5a70').lerp(new THREE.Color('#ffd28a'), night));
+  }
+  if (glowMaterial) {
+    glowMaterial.opacity = night * (0.78 + Math.sin(clock.getElapsedTime() * 2.2) * 0.06);
+  }
+  polePointLights.forEach((light) => {
+    light.intensity = approach(light.intensity, night * 17, delta, 3);
+  });
+}
+
+function updateCelestialVisuals(target, fogColor) {
+  const sunWorldPosition = target.sunDirection.clone().multiplyScalar(72).add(camera.position);
+  sunSprite.position.copy(sunWorldPosition);
+  sunSprite.material.opacity = target.dayFactor * (1 - target.overcast * 0.78);
+
+  const moonDirection = target.sunDirection.clone().multiplyScalar(-1);
+  moonSprite.position.copy(moonDirection.multiplyScalar(70).add(camera.position));
+  moonSprite.material.opacity = currentNight * (1 - target.fog * 0.85) * (1 - target.overcast * 0.55);
+
+  if (starField) {
+    starField.position.copy(camera.position);
+    starField.material.opacity = currentNight * (1 - target.fog * 0.92) * (1 - target.overcast * 0.82);
   }
 }
+
+function updateWeatherParticles(target, delta) {
+  if (rainGroup) {
+    rainGroup.visible = target.rain > 0.01;
+    rainGroup.material.opacity = approach(rainGroup.material.opacity, target.rain * 0.55, delta, 4);
+    if (target.rain > 0.01) {
+      const positions = rainGroup.geometry.attributes.position.array;
+      const speeds = rainGroup.userData.speeds;
+      rainGroup.position.set(camera.position.x, 0, camera.position.z);
+      for (let index = 0; index < rainGroup.userData.count; index += 1) {
+        positions[index * 6 + 1] -= speeds[index] * delta;
+        positions[index * 6 + 4] -= speeds[index] * delta;
+        positions[index * 6] -= speeds[index] * delta * 0.12;
+        positions[index * 6 + 3] -= speeds[index] * delta * 0.12;
+        if (positions[index * 6 + 1] < 0.2) {
+          resetRainDrop(positions, index, false);
+          positions[index * 6] += camera.position.x - rainGroup.position.x;
+          positions[index * 6 + 2] += camera.position.z - rainGroup.position.z;
+          positions[index * 6 + 3] = positions[index * 6] - 0.16;
+          positions[index * 6 + 5] = positions[index * 6 + 2] + 0.06;
+        }
+      }
+      rainGroup.geometry.attributes.position.needsUpdate = true;
+    }
+  }
+
+  if (snowSystem) {
+    snowSystem.visible = target.snowfall > 0.01;
+    snowSystem.material.opacity = approach(snowSystem.material.opacity, target.snowfall * 0.9, delta, 3.5);
+    if (target.snowfall > 0.01) {
+      const positions = snowSystem.geometry.attributes.position.array;
+      const { speeds, drift, count } = snowSystem.userData;
+      const elapsed = clock.getElapsedTime();
+      snowSystem.position.set(camera.position.x, 0, camera.position.z);
+      for (let index = 0; index < count; index += 1) {
+        positions[index * 3 + 1] -= speeds[index] * delta;
+        positions[index * 3] += Math.sin(elapsed * 0.7 + drift[index]) * delta * 0.7;
+        if (positions[index * 3 + 1] < 0.2) {
+          positions[index * 3] = THREE.MathUtils.randFloatSpread(46);
+          positions[index * 3 + 1] = 18 + Math.random() * 5;
+          positions[index * 3 + 2] = THREE.MathUtils.randFloatSpread(36);
+        }
+      }
+      snowSystem.geometry.attributes.position.needsUpdate = true;
+    }
+  }
+}
+
 
 function updateRoute() {
   if (routeGroup) {
@@ -1062,6 +1473,311 @@ function updateRoute() {
   scene.add(routeGroup);
 }
 
+function createGlowTexture(coreColor, haloColor) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext('2d');
+  const gradient = context.createRadialGradient(128, 128, 4, 128, 128, 124);
+  gradient.addColorStop(0, coreColor);
+  gradient.addColorStop(0.28, haloColor);
+  gradient.addColorStop(1, 'rgba(0,0,0,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(canvas);
+}
+
+function createSkyDome() {
+  const material = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      uTop: { value: new THREE.Color('#2a7fd1') },
+      uHorizon: { value: new THREE.Color('#bfe9ff') },
+      uNight: { value: 0 },
+      uDusk: { value: 0 }
+    },
+    vertexShader: `
+      varying vec3 vWorldPosition;
+      void main() {
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPosition.xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uTop;
+      uniform vec3 uHorizon;
+      uniform float uNight;
+      uniform float uDusk;
+      varying vec3 vWorldPosition;
+      void main() {
+        float h = clamp(normalize(vWorldPosition).y * 1.35, 0.0, 1.0);
+        vec3 dayColor = mix(uHorizon, uTop, pow(h, 0.72));
+        vec3 duskTint = vec3(1.0, 0.48, 0.28);
+        dayColor = mix(dayColor, duskTint, uDusk * (1.0 - h) * 0.72);
+        vec3 nightColor = mix(vec3(0.012, 0.025, 0.07), vec3(0.05, 0.09, 0.19), pow(h, 0.8));
+        vec3 color = mix(dayColor, nightColor, uNight);
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `
+  });
+  skyDome = new THREE.Mesh(new THREE.SphereGeometry(90, 36, 20), material);
+  skyDome.userData.isSky = true;
+  scene.add(skyDome);
+}
+
+function createCelestialBodies() {
+  sunSprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createGlowTexture('rgba(255,247,214,1)', 'rgba(255,196,92,0.55)'),
+      transparent: true,
+      depthWrite: false,
+      fog: false
+    })
+  );
+  sunSprite.scale.set(9, 9, 1);
+  scene.add(sunSprite);
+
+  moonSprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createGlowTexture('rgba(236,244,255,1)', 'rgba(158,190,255,0.4)'),
+      transparent: true,
+      depthWrite: false,
+      fog: false,
+      opacity: 0
+    })
+  );
+  moonSprite.scale.set(6, 6, 1);
+  scene.add(moonSprite);
+
+  const starCount = 700;
+  const positions = new Float32Array(starCount * 3);
+  for (let index = 0; index < starCount; index += 1) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(Math.random() * 0.92 + 0.04);
+    const radius = 82;
+    positions[index * 3] = radius * Math.sin(phi) * Math.cos(theta);
+    positions[index * 3 + 1] = radius * Math.cos(phi);
+    positions[index * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
+  }
+  const starGeometry = new THREE.BufferGeometry();
+  starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  starField = new THREE.Points(
+    starGeometry,
+    new THREE.PointsMaterial({
+      color: '#dfeaff',
+      size: 0.34,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      fog: false
+    })
+  );
+  scene.add(starField);
+}
+
+function createWeatherParticles() {
+  const rainCount = 900;
+  const rainPositions = new Float32Array(rainCount * 6);
+  const rainSpeeds = new Float32Array(rainCount);
+  for (let index = 0; index < rainCount; index += 1) {
+    resetRainDrop(rainPositions, index, true);
+    rainSpeeds[index] = 18 + Math.random() * 12;
+  }
+  const rainGeometry = new THREE.BufferGeometry();
+  rainGeometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+  rainGroup = new THREE.LineSegments(
+    rainGeometry,
+    new THREE.LineBasicMaterial({
+      color: '#9fd8ff',
+      transparent: true,
+      opacity: 0,
+
+    })
+  );
+  rainGroup.userData.speeds = rainSpeeds;
+  rainGroup.userData.count = rainCount;
+  rainGroup.visible = false;
+  scene.add(rainGroup);
+
+  const snowCount = 650;
+  const snowPositions = new Float32Array(snowCount * 3);
+  const snowSpeeds = new Float32Array(snowCount);
+  const snowDrift = new Float32Array(snowCount);
+  for (let index = 0; index < snowCount; index += 1) {
+    snowPositions[index * 3] = THREE.MathUtils.randFloatSpread(46);
+    snowPositions[index * 3 + 1] = Math.random() * 22;
+    snowPositions[index * 3 + 2] = THREE.MathUtils.randFloatSpread(36);
+    snowSpeeds[index] = 0.8 + Math.random() * 1.1;
+    snowDrift[index] = Math.random() * Math.PI * 2;
+  }
+  const snowGeometry = new THREE.BufferGeometry();
+  snowGeometry.setAttribute('position', new THREE.BufferAttribute(snowPositions, 3));
+  snowSystem = new THREE.Points(
+    snowGeometry,
+    new THREE.PointsMaterial({
+      color: '#ffffff',
+      size: 0.22,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false
+    })
+  );
+  snowSystem.userData = { speeds: snowSpeeds, drift: snowDrift, count: snowCount };
+  snowSystem.visible = false;
+  scene.add(snowSystem);
+}
+
+function resetRainDrop(positions, index, randomHeight) {
+  positions[index * 6] = THREE.MathUtils.randFloatSpread(46);
+  positions[index * 6 + 1] = randomHeight ? Math.random() * 22 : 18 + Math.random() * 4;
+  positions[index * 6 + 2] = THREE.MathUtils.randFloatSpread(36);
+  positions[index * 6 + 3] = positions[index * 6] - 0.16;
+  positions[index * 6 + 4] = positions[index * 6 + 1] - 0.9;
+  positions[index * 6 + 5] = positions[index * 6 + 2] + 0.06;
+}
+
+function createStationLayer() {
+  stationLayer = new THREE.Group();
+  stationLayer.name = 'monitor-stations';
+
+  props.stationData.forEach(({ station }) => {
+    const marker = new THREE.Group();
+    marker.position.set(station.position[0], 0, station.position[2]);
+    marker.userData.stationId = station.id;
+
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.035, 0.045, 1.05, 8),
+      new THREE.MeshStandardMaterial({ color: '#cfe6f2', metalness: 0.5, roughness: 0.35 })
+    );
+    pole.position.y = 0.52;
+    marker.add(pole);
+
+    const coreMaterial = new THREE.MeshStandardMaterial({
+      color: '#2ecc71',
+      emissive: '#2ecc71',
+      emissiveIntensity: 0.8,
+      roughness: 0.3,
+      metalness: 0.2
+    });
+    const core = new THREE.Mesh(new THREE.SphereGeometry(0.26, 20, 20), coreMaterial);
+    core.position.y = 1.18;
+    core.userData.stationId = station.id;
+    core.userData.stationCore = true;
+    marker.add(core);
+    interactiveMeshes.push(core);
+
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: '#2ecc71',
+      transparent: true,
+      opacity: 0.8,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.6, 36), ringMaterial);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.06;
+    marker.add(ring);
+
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.02, 0.42, 1.4, 18, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: '#2ecc71',
+        transparent: true,
+        opacity: 0.14,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    beam.position.y = 0.78;
+    marker.add(beam);
+
+    marker.userData.coreMaterial = coreMaterial;
+    marker.userData.ring = ring;
+    marker.userData.beam = beam;
+    stationLayer.add(marker);
+    stationMarkers.set(station.id, marker);
+  });
+
+  scene.add(stationLayer);
+}
+
+function updateStationVisuals(force = false) {
+  if (!stationLayer) {
+    return;
+  }
+
+  stationLayer.visible = props.layerVisible;
+  props.stationData.forEach(({ station, readings }) => {
+    const marker = stationMarkers.get(station.id);
+    if (!marker) {
+      return;
+    }
+    const regionVisible = props.monitorRegion === 'all' || station.region === props.monitorRegion;
+    const isSelected = station.id === props.selectedStationId;
+    marker.visible = regionVisible || isSelected;
+
+    const metricKey = props.monitorMetric;
+    const result = evaluateMetric(metricKey, readings[metricKey]);
+    const color = new THREE.Color(result.color);
+    const materials = [marker.userData.coreMaterial, marker.userData.ring.material, marker.userData.beam.material];
+    materials.forEach((material) => material.color.copy(color));
+    marker.userData.coreMaterial.emissive.copy(color);
+    marker.userData.exceeded = result.exceeded;
+    marker.userData.colorHex = result.color;
+
+    const scale = isSelected ? 1.32 : 1;
+    marker.scale.setScalar(scale);
+  });
+}
+
+function focusStation(stationId) {
+  const marker = stationMarkers.get(stationId);
+  if (!marker) {
+    return;
+  }
+  const target = marker.position.clone();
+  const direction = camera.position.clone().sub(controls.target).normalize();
+  direction.y = THREE.MathUtils.clamp(direction.y + 0.1, 0.24, 0.5);
+  direction.normalize();
+  startCameraFlight(
+    new THREE.Vector3(target.x, 3.4, target.z).add(direction.multiplyScalar(8.4)),
+    new THREE.Vector3(target.x, 1.2, target.z),
+    1.05
+  );
+}
+
+function updateStationMarkerAnimations(elapsed) {
+  if (!stationLayer || !props.layerVisible) {
+    return;
+  }
+
+  stationMarkers.forEach((marker, id) => {
+    if (!marker.visible) {
+      return;
+    }
+    const isSelected = id === props.selectedStationId;
+    const isHovered = id === hoveredStationId;
+    const pulse = marker.userData.exceeded
+      ? 0.5 + 0.5 * Math.sin(elapsed * 6.4)
+      : 0.12 + 0.05 * Math.sin(elapsed * 2 + marker.position.x);
+
+    marker.userData.coreMaterial.emissiveIntensity = (marker.userData.exceeded ? 1.1 + pulse * 1.6 : 0.75) * (isSelected ? 1.25 : 1);
+    const ringScale = marker.userData.exceeded ? 1 + pulse * 0.55 : 1 + pulse * 0.18;
+    marker.userData.ring.scale.setScalar(ringScale);
+    marker.userData.ring.material.opacity = marker.userData.exceeded ? 0.45 + pulse * 0.55 : 0.5;
+    marker.userData.beam.material.opacity = marker.userData.exceeded ? 0.12 + pulse * 0.42 : 0.12;
+
+    const targetScale = isSelected ? 1.32 : isHovered ? 1.16 : 1;
+    const currentScale = marker.scale.x;
+    const nextScale = currentScale + (targetScale - currentScale) * 0.18;
+    marker.scale.setScalar(nextScale);
+  });
+}
+
 function resize() {
   if (!canvasHost.value || !renderer || !camera) {
     return;
@@ -1074,8 +1790,11 @@ function resize() {
 }
 
 function animate() {
-  const elapsed = clock.getElapsedTime();
+  const delta = Math.min(clock.getDelta(), 0.05);
+  const elapsed = clock.elapsedTime;
   frameCount += 1;
+  updateEnvironment(false, delta);
+  updateStationMarkerAnimations(elapsed);
   if (routeGroup) {
     const curve = routeGroup.userData.curve;
     routeGroup.children.forEach((child) => {
@@ -1153,15 +1872,6 @@ function animate() {
     }
   });
 
-  if (rainGroup) {
-    rainGroup.children.forEach((drop) => {
-      drop.position.y -= drop.userData.speed;
-      if (drop.position.y < -3) {
-        drop.position.y = 16;
-      }
-    });
-  }
-
   controls.update();
   if (frameCount % 12 === 0) {
     const direction = camera.position.clone().sub(controls.target);
@@ -1202,7 +1912,24 @@ watch(() => props.focusedBuildingId, (id) => focusBuilding(id));
 watch(() => props.route, updateRoute, { deep: true });
 watch(() => props.routeFocusKey, () => focusRoute());
 watch(() => props.cameraFocusKey, () => focusBuilding(props.selectedBuildingId, props.cameraMode));
-watch(() => props.sceneMode, updateEnvironment);
+watch(
+  () => [props.weather, props.timeHours],
+  () => updateEnvironment()
+);
+watch(
+  () => [props.layerVisible, props.monitorRegion, props.monitorMetric, props.selectedStationId],
+  () => updateStationVisuals()
+);
+watch(
+  () => props.stationData,
+  () => updateStationVisuals(),
+  { deep: true }
+);
+watch(() => props.selectedStationId, (id) => {
+  if (id) {
+    focusStation(id);
+  }
+});
 </script>
 
 <template>

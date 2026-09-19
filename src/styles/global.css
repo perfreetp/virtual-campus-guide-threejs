@@ -778,12 +778,19 @@ button {
   .control-panel,
   .left-hud,
   .right-hud,
-  .mini-map {
+  .mini-map,
+  .alert-center,
+  .time-axis,
+  .station-card {
     position: relative;
     inset: auto;
     width: auto;
     min-width: 0;
     transform: none;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    top: auto;
   }
 
   .screen-header {
@@ -799,8 +806,23 @@ button {
   .control-panel,
   .left-hud,
   .right-hud,
-  .mini-map {
+  .mini-map,
+  .alert-center,
+  .time-axis,
+  .station-card {
     margin-top: 14px;
+  }
+
+  .alert-center {
+    width: 100%;
+  }
+
+  .alert-dropdown {
+    position: relative;
+  }
+
+  .time-axis {
+    grid-template-columns: auto auto minmax(0, 1fr);
   }
 
   .left-hud,
@@ -846,4 +868,650 @@ button {
   .campus-scene {
     height: 560px;
   }
+}
+
+/* ===== 环境监测图层面板 ===== */
+.env-panel {
+  padding: 12px;
+}
+
+.env-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.env-switch input {
+  display: none;
+}
+
+.env-switch i {
+  border: 1px solid rgba(72, 214, 255, 0.4);
+  border-radius: 99px;
+  background: rgba(7, 48, 76, 0.9);
+  color: #8fdcff;
+  padding: 3px 9px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.env-switch input:checked + i {
+  border-color: #31e3ff;
+  background: linear-gradient(180deg, #20c6ee, #087ab8);
+  color: #ffffff;
+}
+
+.env-region-row,
+.env-metric-row {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.env-region-row {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.env-metric-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.env-region-row button,
+.env-metric-row button {
+  min-height: 30px;
+  border: 1px solid rgba(72, 214, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(4, 31, 52, 0.62);
+  color: #bfe9ff;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 0 2px;
+}
+
+.env-region-row button.active,
+.env-metric-row button.active {
+  border-color: #35e9ff;
+  background: rgba(22, 171, 220, 0.52);
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(47, 229, 255, 0.28);
+}
+
+.env-region-row button:disabled,
+.env-metric-row button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.env-average {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.env-average > div {
+  position: relative;
+  border: 1px solid rgba(77, 221, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(2, 24, 40, 0.55);
+  padding: 7px 9px;
+}
+
+.env-average > div.dim {
+  opacity: 0.68;
+}
+
+.env-average span {
+  color: rgba(213, 245, 255, 0.7);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.env-average strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 19px;
+  line-height: 1.1;
+}
+
+.env-average strong em {
+  margin-left: 2px;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.env-average i {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border-radius: 4px;
+  width: 6px;
+  height: 18px;
+}
+
+.env-summary {
+  margin: 8px 0 0;
+  color: rgba(220, 244, 255, 0.72);
+  font-size: 11px;
+}
+
+.env-summary b {
+  color: #7fefff;
+  font-size: 13px;
+}
+
+.env-summary b.warning {
+  color: #ff8a74;
+  text-shadow: 0 0 12px rgba(255, 90, 70, 0.6);
+}
+
+/* ===== 天气面板 ===== */
+.weather-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.weather-grid button {
+  display: grid;
+  gap: 3px;
+  place-items: center;
+  min-height: 52px;
+  border: 1px solid rgba(72, 214, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(4, 31, 52, 0.58);
+  color: #c8f6ff;
+}
+
+.weather-grid button i {
+  font-size: 19px;
+  font-style: normal;
+  line-height: 1;
+}
+
+.weather-grid button span {
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.weather-grid button.active {
+  border-color: #35e9ff;
+  background: linear-gradient(180deg, rgba(32, 198, 238, 0.55), rgba(8, 122, 184, 0.62));
+  color: #ffffff;
+  box-shadow: 0 0 16px rgba(47, 229, 255, 0.3);
+}
+
+/* ===== 时间轴 ===== */
+.time-axis {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: 20px;
+  width: min(560px, calc(100vw - 640px));
+  min-width: 380px;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+}
+
+.time-play {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(72, 214, 255, 0.5);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #20c6ee, #087ab8);
+  color: #ffffff;
+  font-size: 13px;
+  box-shadow: 0 0 18px rgba(32, 210, 255, 0.35);
+}
+
+.time-readout {
+  display: grid;
+  gap: 1px;
+  min-width: 76px;
+}
+
+.time-readout strong {
+  color: #ffffff;
+  font-size: 20px;
+  line-height: 1.05;
+}
+
+.time-readout span {
+  color: #7fdcff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.time-slider-wrap {
+  position: relative;
+  padding: 4px 0 14px;
+}
+
+.time-slider {
+  width: 100%;
+  height: 6px;
+  border-radius: 99px;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  background: linear-gradient(90deg, #182c4c 0%, #f6b35e 34%, #7fdcff 62%, #182c4c 100%);
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.45);
+}
+
+.time-slider::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: #35e9ff;
+  box-shadow: 0 0 12px rgba(53, 233, 255, 0.8);
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.time-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: #35e9ff;
+  box-shadow: 0 0 12px rgba(53, 233, 255, 0.8);
+  cursor: pointer;
+}
+
+.time-ticks {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 18px;
+  height: 12px;
+}
+
+.time-ticks span {
+  position: absolute;
+  transform: translateX(-50%);
+  color: rgba(200, 236, 255, 0.6);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+/* ===== 告警中心 ===== */
+.alert-center {
+  position: absolute;
+  z-index: 7;
+  top: 90px;
+  right: 28px;
+  width: 312px;
+}
+
+.alert-entry {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid rgba(255, 138, 116, 0.45);
+  border-radius: 999px;
+  background: rgba(40, 18, 20, 0.62);
+  color: #ffd9d0;
+  padding: 0 15px;
+  font-size: 13px;
+  font-weight: 900;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 0 22px rgba(255, 90, 70, 0.12);
+}
+
+.alert-entry.attention {
+  animation: alert-glow 1.4s ease-in-out infinite;
+}
+
+.alert-bell {
+  font-style: normal;
+}
+
+@keyframes alert-glow {
+  0%, 100% { box-shadow: 0 0 16px rgba(255, 90, 70, 0.18); border-color: rgba(255, 138, 116, 0.4); }
+  50% { box-shadow: 0 0 30px rgba(255, 90, 70, 0.5); border-color: #ff8a74; }
+}
+
+.alert-badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(8, 17, 31, 0.9);
+  border-radius: 99px;
+  background: linear-gradient(180deg, #ff6a55, #d6352a);
+  color: #ffffff;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1;
+  padding: 0 4px;
+  box-shadow: 0 0 12px rgba(255, 80, 60, 0.7);
+}
+
+.alert-dropdown {
+  margin-top: 8px;
+  padding: 10px;
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 138, 116, 0.4) transparent;
+}
+
+.alert-dropdown-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.alert-dropdown-head button {
+  flex: 1;
+  min-height: 30px;
+  border: 1px solid rgba(72, 214, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(4, 31, 52, 0.58);
+  color: #bfe9ff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.alert-dropdown-head button.active {
+  border-color: #ff8a74;
+  background: rgba(158, 56, 44, 0.5);
+  color: #ffffff;
+}
+
+.alert-dropdown-head .alert-handle-all {
+  flex: 0 0 auto;
+  border-color: rgba(53, 233, 255, 0.5);
+  color: #8ff2ff;
+  padding: 0 10px;
+}
+
+.alert-list {
+  display: grid;
+  gap: 8px;
+}
+
+.alert-empty {
+  margin: 14px 6px;
+  color: rgba(220, 244, 255, 0.62);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.alert-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  border: 1px solid rgba(255, 138, 116, 0.2);
+  border-radius: 8px;
+  background: rgba(30, 16, 20, 0.5);
+  padding: 9px;
+}
+
+.alert-item.handled {
+  border-color: rgba(90, 200, 160, 0.24);
+  background: rgba(12, 30, 26, 0.5);
+  opacity: 0.72;
+}
+
+.alert-dot {
+  width: 8px;
+  border-radius: 99px;
+}
+
+.alert-title {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.alert-title strong {
+  color: #ffffff;
+  font-size: 12.5px;
+}
+
+.alert-title span {
+  color: rgba(180, 224, 240, 0.7);
+  font-size: 10px;
+}
+
+.alert-body p {
+  margin: 3px 0;
+  color: rgba(230, 245, 252, 0.86);
+  font-size: 11.5px;
+}
+
+.alert-body p b {
+  margin: 0 2px;
+  font-size: 13px;
+}
+
+.alert-body small {
+  color: rgba(170, 208, 226, 0.6);
+  font-size: 10px;
+}
+
+.alert-actions {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+}
+
+.alert-actions button {
+  min-width: 46px;
+  min-height: 24px;
+  border: 1px solid rgba(72, 214, 255, 0.32);
+  border-radius: 5px;
+  background: rgba(7, 48, 76, 0.85);
+  color: #bfefff;
+  font-size: 10.5px;
+  font-weight: 900;
+  padding: 0 6px;
+}
+
+.alert-actions .alert-confirm {
+  border-color: rgba(255, 138, 116, 0.55);
+  background: rgba(158, 56, 44, 0.55);
+  color: #ffe9e5;
+}
+
+.alert-actions .alert-locate.active {
+  border-color: #35e9ff;
+  background: rgba(22, 171, 220, 0.6);
+}
+
+/* ===== 监测点详情卡 ===== */
+.station-card {
+  position: absolute;
+  z-index: 6;
+  left: 302px;
+  bottom: 96px;
+  width: 286px;
+  padding: 13px;
+  pointer-events: auto;
+}
+
+.station-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.station-card h3 {
+  margin: 3px 0 6px;
+  color: #ffffff;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.station-region {
+  border: 1px solid rgba(70, 220, 255, 0.32);
+  border-radius: 999px;
+  background: rgba(30, 158, 208, 0.22);
+  color: #98efff;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.station-close {
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(72, 214, 255, 0.3);
+  border-radius: 50%;
+  background: rgba(7, 48, 76, 0.86);
+  color: #bfefff;
+  font-size: 12px;
+}
+
+.station-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.station-metrics button {
+  display: grid;
+  gap: 2px;
+  border: 1px solid rgba(77, 221, 255, 0.16);
+  border-radius: 7px;
+  background: rgba(2, 24, 40, 0.62);
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.station-metrics button.active {
+  border-color: #39e7ff;
+  background: rgba(16, 128, 174, 0.42);
+  box-shadow: 0 0 14px rgba(53, 233, 255, 0.25);
+}
+
+.station-metrics span {
+  color: rgba(205, 240, 252, 0.72);
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.station-metrics strong {
+  font-size: 17px;
+  line-height: 1.15;
+}
+
+.station-metrics em {
+  justify-self: start;
+  border-radius: 4px;
+  color: #06121e;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.station-trend {
+  margin-top: 11px;
+  border-top: 1px solid rgba(100, 226, 255, 0.18);
+  padding-top: 9px;
+}
+
+.station-trend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.station-trend-head span {
+  color: rgba(205, 240, 252, 0.78);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.station-trend-head b {
+  font-size: 16px;
+}
+
+.trend-chart svg {
+  width: 100%;
+  height: 64px;
+  display: block;
+}
+
+.station-trend-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  color: rgba(170, 210, 228, 0.62);
+  font-size: 9.5px;
+}
+
+.station-pop-enter-active,
+.station-pop-leave-active {
+  transition: opacity 260ms ease, transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.station-pop-enter-from,
+.station-pop-leave-to {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+/* ===== 小地图监测点 ===== */
+.map-station {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  background: var(--station-color, #2ecc71);
+  box-shadow: 0 0 8px var(--station-color, #2ecc71);
+  z-index: 2;
+  cursor: pointer;
+}
+
+.map-station.active {
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  box-shadow: 0 0 16px var(--station-color, #2ecc71), 0 0 24px rgba(255, 255, 255, 0.55);
+}
+
+.map-station.hidden {
+  display: none;
+}
+
+/* ===== 全景模式联动隐藏新增图层 ===== */
+.panorama-mode .alert-center,
+.panorama-mode .time-axis,
+.panorama-mode .station-card {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(130%);
+  transition: opacity 380ms ease, transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.panorama-mode .alert-center {
+  transform: translateY(-140%);
+}
+
+.alert-center,
+.time-axis,
+.station-card {
+  transition: opacity 380ms ease, transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
 }
