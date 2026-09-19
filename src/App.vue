@@ -1,10 +1,46 @@
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CampusScene from './components/CampusScene.vue';
 import ControlPanel from './components/ControlPanel.vue';
 import InfoPanel from './components/InfoPanel.vue';
+import DeviceLayerPanel from './components/DeviceLayerPanel.vue';
+import DeviceDetailCard from './components/DeviceDetailCard.vue';
+import EnergyPanel from './components/EnergyPanel.vue';
+import AlarmCenter from './components/AlarmCenter.vue';
 import { campusBuildings, categoryNames, recommendedRoutes } from './mock/campusData';
 import { findCampusPath, toMiniMapPoint } from './utils/pathfinding';
+import { useDeviceMonitor } from './composables/useDeviceMonitor';
+
+const {
+  devices,
+  deviceLayerOn,
+  filters: deviceFilter,
+  selectedDeviceId,
+  focusDeviceKey,
+  energyBuildingIds,
+  energyVersion,
+  unhandledAlarms,
+  selectDevice,
+  startSimulation
+} = useDeviceMonitor();
+
+const deviceVersion = ref(0);
+onMounted(() => {
+  startSimulation();
+});
+watch(devices, () => {
+  deviceVersion.value += 1;
+}, { deep: true });
+
+function handleDeviceSelect(deviceId) {
+  const device = devices.find((item) => item.id === deviceId);
+  if (!device) {
+    return;
+  }
+  selectedBuildingId.value = device.buildingId;
+  focusedBuildingId.value = device.buildingId;
+  selectDevice(deviceId);
+}
 
 const activeCategory = ref('all');
 const selectedBuildingId = ref(campusBuildings[0].id);
@@ -160,7 +196,16 @@ onBeforeUnmount(() => {
       :camera-focus-key="cameraFocusKey"
       :scene-mode="sceneMode"
       :route="route"
+      :device-layer-on="deviceLayerOn"
+      :devices="devices"
+      :device-filter="deviceFilter"
+      :selected-device-id="selectedDeviceId"
+      :focus-device-key="focusDeviceKey"
+      :device-version="deviceVersion"
+      :energy-building-ids="energyBuildingIds"
+      :energy-version="energyVersion"
       @select-building="handleBuildingSelect"
+      @select-device="handleDeviceSelect"
       @camera-state="handleCameraState"
     />
 
@@ -184,6 +229,9 @@ onBeforeUnmount(() => {
       <div class="system-status">
         <span>WebGL 在线</span>
         <span>Three.js 场景同步</span>
+        <span class="alarm-status-chip" :class="{ alerting: unhandledAlarms.length }">
+          未处理告警 <b>{{ unhandledAlarms.length }}</b>
+        </span>
         <strong>17:38</strong>
       </div>
     </header>
@@ -248,14 +296,18 @@ onBeforeUnmount(() => {
             @click="activeCategory = item.key"
           >
             <span>{{ item.label }}</span>
-            <strong>{{ item.count }}</strong>
-          </button>
-        </div>
-      </section>
+        <strong>{{ item.count }}</strong>
+        </button>
+      </div>
+    </section>
+
+      <DeviceLayerPanel />
     </aside>
 
     <aside class="right-hud">
       <InfoPanel :building="selectedBuilding" />
+
+      <EnergyPanel />
 
       <section class="glass-panel camera-panel">
         <div class="panel-heading">
@@ -309,7 +361,11 @@ onBeforeUnmount(() => {
           </label>
         </div>
       </section>
+
+      <AlarmCenter />
     </aside>
+
+    <DeviceDetailCard class="device-detail-anchor" />
 
     <section class="mini-map glass-panel" aria-label="校园小地图">
       <div class="panel-heading">

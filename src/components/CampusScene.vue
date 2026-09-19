@@ -41,10 +41,42 @@ const props = defineProps({
   route: {
     type: Object,
     default: null
+  },
+  deviceLayerOn: {
+    type: Boolean,
+    default: true
+  },
+  devices: {
+    type: Array,
+    default: () => []
+  },
+  deviceFilter: {
+    type: Object,
+    default: () => ({})
+  },
+  selectedDeviceId: {
+    type: String,
+    default: ''
+  },
+  focusDeviceKey: {
+    type: Number,
+    default: 0
+  },
+  deviceVersion: {
+    type: Number,
+    default: 0
+  },
+  energyBuildingIds: {
+    type: Object,
+    default: () => new Set()
+  },
+  energyVersion: {
+    type: Number,
+    default: 0
   }
 });
 
-const emit = defineEmits(['selectBuilding', 'cameraState']);
+const emit = defineEmits(['selectBuilding', 'selectDevice', 'cameraState']);
 
 const canvasHost = ref(null);
 let renderer;
@@ -68,6 +100,18 @@ let frameCount = 0;
 const buildingGroups = new Map();
 const interactiveMeshes = [];
 const clock = new THREE.Clock();
+const deviceGroups = new Map();
+const devicePickables = [];
+const deviceLabels = new Map();
+const deviceTypeVisuals = {
+  elevator: { color: '#39d8ff', dim: '#1c5e78' },
+  ac: { color: '#4fe7a4', dim: '#25674e' },
+  light: { color: '#ffd866', dim: '#7a6733' },
+  pump: { color: '#7c8cff', dim: '#3d4687' }
+};
+let hoveredDeviceId = '';
+let glowTexture;
+const deviceGeometries = {};
 const buildingPalettes = {
   teaching: {
     body: ['#5e9ee8', '#77aee4', '#8fa7e8', '#64bddc'],
@@ -594,6 +638,306 @@ function addLightPoles() {
   });
 }
 
+function ensureDeviceGeometries() {
+  if (deviceGeometries.ready) {
+    return;
+  }
+  deviceGeometries.ready = true;
+  deviceGeometries.elevatorShaft = new THREE.BoxGeometry(0.28, 0.56, 0.28);
+  deviceGeometries.elevatorCar = new THREE.BoxGeometry(0.18, 0.18, 0.18);
+  deviceGeometries.acBody = new THREE.BoxGeometry(0.5, 0.26, 0.34);
+  deviceGeometries.acFan = new THREE.CircleGeometry(0.1, 16);
+  deviceGeometries.lightPole = new THREE.CylinderGeometry(0.03, 0.03, 0.62, 8);
+  deviceGeometries.lightBulb = new THREE.SphereGeometry(0.09, 12, 12);
+  deviceGeometries.lightBar = new THREE.BoxGeometry(0.42, 0.07, 0.12);
+  deviceGeometries.pumpBody = new THREE.CylinderGeometry(0.16, 0.16, 0.34, 14);
+  deviceGeometries.pumpCap = new THREE.CylinderGeometry(0.1, 0.1, 0.16, 14);
+  deviceGeometries.pumpPipe = new THREE.CylinderGeometry(0.035, 0.035, 0.4, 8);
+  deviceGeometries.base = new THREE.CylinderGeometry(0.24, 0.28, 0.08, 18);
+  deviceGeometries.selectRing = new THREE.TorusGeometry(0.34, 0.025, 8, 36);
+  deviceGeometries.energyRing = new THREE.TorusGeometry(0.3, 0.02, 8, 32);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const context = canvas.getContext('2d');
+  const gradient = context.createRadialGradient(64, 64, 4, 64, 64, 62);
+  gradient.addColorStop(0, 'rgba(255,70,70,0.95)');
+  gradient.addColorStop(0.42, 'rgba(255,60,60,0.42)');
+  gradient.addColorStop(1, 'rgba(255,60,60,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 128, 128);
+  glowTexture = new THREE.CanvasTexture(canvas);
+}
+
+function createDeviceMesh(device) {
+  const visual = deviceTypeVisuals[device.type] || deviceTypeVisuals.elevator;
+  const group = new THREE.Group();
+  group.name = device.id;
+  group.position.set(device.offset[0], device.offset[1], device.offset[2]);
+
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: visual.color,
+    emissive: visual.color,
+    emissiveIntensity: 0.32,
+    metalness: 0.32,
+    roughness: 0.36
+  });
+  const darkMaterial = new THREE.MeshStandardMaterial({
+    color: '#0c2a3e',
+    emissive: '#0c2a3e',
+    emissiveIntensity: 0.2,
+    metalness: 0.4,
+    roughness: 0.5
+  });
+
+  const meshes = [];
+  const push = (mesh, isBody = true) => {
+    mesh.userData.deviceId = device.id;
+    mesh.userData.deviceBody = isBody;
+    mesh.castShadow = isBody;
+    group.add(mesh);
+    meshes.push(mesh);
+  };
+
+  if (device.type === 'elevator') {
+    const shaft = new THREE.Mesh(deviceGeometries.elevatorShaft, bodyMaterial);
+    shaft.position.y = 0.28;
+    push(shaft);
+    const car = new THREE.Mesh(deviceGeometries.elevatorCar, darkMaterial);
+    car.position.y = 0.3;
+    push(car, false);
+  } else if (device.type === 'ac') {
+    const body = new THREE.Mesh(deviceGeometries.acBody, bodyMaterial);
+    body.position.y = 0.13;
+    push(body);
+    const fanHolder = new THREE.Group();
+    const fan = new THREE.Mesh(
+      deviceGeometries.acFan,
+      new THREE.MeshBasicMaterial({ color: '#d8feff', side: THREE.DoubleSide })
+    );
+    fan.userData.deviceId = device.id;
+    fan.userData.deviceBody = true;
+    fan.userData.isFan = true;
+    fanHolder.add(fan);
+    fanHolder.position.set(0, 0.13, 0.18);
+    group.add(fanHolder);
+    group.userData.fanHolder = fanHolder;
+  } else if (device.type === 'light') {
+    const pole = new THREE.Mesh(deviceGeometries.lightPole, darkMaterial);
+    pole.position.y = 0.31;
+    push(pole, false);
+    const bulb = new THREE.Mesh(
+      deviceGeometries.lightBulb,
+      new THREE.MeshStandardMaterial({
+        color: visual.color,
+        emissive: visual.color,
+        emissiveIntensity: 1.2
+      })
+    );
+    bulb.position.y = 0.64;
+    push(bulb);
+    const bar = new THREE.Mesh(deviceGeometries.lightBar, bodyMaterial);
+    bar.position.y = 0.64;
+    push(bar, false);
+  } else {
+    const body = new THREE.Mesh(deviceGeometries.pumpBody, bodyMaterial);
+    body.position.y = 0.17;
+    push(body);
+    const cap = new THREE.Mesh(deviceGeometries.pumpCap, darkMaterial);
+    cap.position.y = 0.42;
+    push(cap, false);
+    const pipe = new THREE.Mesh(deviceGeometries.pumpPipe, darkMaterial);
+    pipe.rotation.z = Math.PI / 2;
+    pipe.position.set(0.26, 0.2, 0);
+    push(pipe, false);
+  }
+
+  const base = new THREE.Mesh(
+    deviceGeometries.base,
+    new THREE.MeshStandardMaterial({ color: '#13384d', emissive: '#103044', emissiveIntensity: 0.25, roughness: 0.5 })
+  );
+  base.userData.deviceId = device.id;
+  base.userData.deviceBody = false;
+  group.add(base);
+
+  const halo = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: glowTexture,
+      color: '#ff4d4d',
+      transparent: true,
+      opacity: 0.8,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  halo.scale.set(1.5, 1.5, 1);
+  halo.position.y = 0.5;
+  halo.userData.deviceHalo = true;
+  group.add(halo);
+
+  const selectRing = new THREE.Mesh(
+    deviceGeometries.selectRing,
+    new THREE.MeshBasicMaterial({
+      color: '#ffffff',
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  selectRing.rotation.x = Math.PI / 2;
+  selectRing.position.y = 0.05;
+  selectRing.visible = false;
+  selectRing.userData.deviceSelectRing = true;
+  group.add(selectRing);
+
+  const energyRing = new THREE.Mesh(
+    deviceGeometries.energyRing,
+    new THREE.MeshBasicMaterial({
+      color: '#3dffa8',
+      transparent: true,
+      opacity: 0.75,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  energyRing.rotation.x = Math.PI / 2;
+  energyRing.position.y = 0.06;
+  energyRing.visible = false;
+  energyRing.userData.deviceEnergyRing = true;
+  group.add(energyRing);
+
+  return group;
+}
+
+function createDeviceLabel(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 300;
+  canvas.height = 72;
+  const context = canvas.getContext('2d');
+  context.fillStyle = 'rgba(2,16,30,0.66)';
+  roundRect(context, 8, 12, 284, 44, 10);
+  context.fill();
+  context.strokeStyle = 'rgba(90,236,255,0.62)';
+  context.lineWidth = 2;
+  roundRect(context, 8, 12, 284, 44, 10);
+  context.stroke();
+  context.fillStyle = '#d9fbff';
+  context.font = '700 20px Arial, sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(text, 150, 35);
+
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true }));
+  sprite.scale.set(2.1, 0.5, 1);
+  sprite.userData.isDeviceLabel = true;
+  sprite.visible = false;
+  return sprite;
+}
+
+function createDeviceLayer() {
+  ensureDeviceGeometries();
+  props.devices.forEach((device) => {
+    const buildingGroup = buildingGroups.get(device.buildingId);
+    if (!buildingGroup) {
+      return;
+    }
+    const marker = createDeviceMesh(device);
+    const label = createDeviceLabel(`${device.name} · ${device.buildingName}`);
+    label.position.set(0, 1.15, 0);
+    marker.add(label);
+    deviceLabels.set(device.id, label);
+    buildingGroup.add(marker);
+    marker.traverse((child) => {
+      if (child.userData.deviceId && child.isMesh) {
+        devicePickables.push(child);
+      }
+    });
+    deviceGroups.set(device.id, marker);
+  });
+  updateDeviceVisibility();
+  updateDeviceVisuals();
+}
+
+function isBuildingVisible(buildingId) {
+  return props.activeCategory === 'all' ||
+    props.buildings.some((building) => building.id === buildingId && building.category === props.activeCategory);
+}
+
+function updateDeviceVisibility() {
+  deviceGroups.forEach((group, id) => {
+    const device = props.devices.find((item) => item.id === id);
+    if (!device) {
+      return;
+    }
+    const matchBuilding = props.deviceFilter.building === 'all' || device.buildingId === props.deviceFilter.building;
+    const matchType = props.deviceFilter.type === 'all' || device.type === props.deviceFilter.type;
+    const matchAbnormal = !props.deviceFilter.abnormalOnly || device.isFault;
+    group.visible = props.deviceLayerOn && matchBuilding && matchType && matchAbnormal && isBuildingVisible(device.buildingId);
+  });
+}
+
+function updateDeviceVisuals() {
+  deviceGroups.forEach((group, id) => {
+    const device = props.devices.find((item) => item.id === id);
+    if (!device) {
+      return;
+    }
+    const visual = deviceTypeVisuals[device.type] || deviceTypeVisuals.elevator;
+    const saving = props.energyBuildingIds.has('__all__') || props.energyBuildingIds.has(device.buildingId);
+    group.traverse((child) => {
+      if (!child.isMesh || !child.userData.deviceBody || !child.material) {
+        return;
+      }
+      if (device.isFault) {
+        child.material.color.set('#ff4444');
+        child.material.emissive?.set('#ff1e1e');
+        child.material.emissiveIntensity = child.userData.isFan ? 1 : 0.8;
+      } else if (saving) {
+        child.material.color.set(visual.dim);
+        child.material.emissive?.set(visual.color);
+        child.material.emissiveIntensity = 0.12;
+      } else {
+        child.material.color.set(visual.color);
+        child.material.emissive?.set(visual.color);
+        child.material.emissiveIntensity = child.userData.isFan ? 0.9 : 0.32;
+      }
+    });
+    const energyRing = group.children.find((child) => child.userData.deviceEnergyRing);
+    if (energyRing) {
+      energyRing.visible = saving && !device.isFault;
+    }
+  });
+}
+
+function focusDevice(id) {
+
+  const device = props.devices.find((item) => item.id === id);
+  if (!device) {
+    return;
+  }
+  const buildingGroup = buildingGroups.get(device.buildingId);
+  if (!buildingGroup) {
+    return;
+  }
+  const targetWorld = new THREE.Vector3();
+  const marker = deviceGroups.get(id);
+  if (marker) {
+    marker.getWorldPosition(targetWorld);
+  } else {
+    targetWorld.set(device.offset[0], device.offset[1], device.offset[2]);
+    targetWorld.add(buildingGroup.position);
+  }
+  const nextTarget = new THREE.Vector3(targetWorld.x, THREE.MathUtils.clamp(targetWorld.y, 0.8, 4.5), targetWorld.z);
+  const currentDirection = camera.position.clone().sub(controls.target).normalize();
+  const elevatedDirection = currentDirection.y < 0.2 ? currentDirection.setY(0.3) : currentDirection;
+  elevatedDirection.normalize();
+  const nextPosition = nextTarget.clone().add(elevatedDirection.multiplyScalar(4.6));
+  nextPosition.y = Math.max(nextPosition.y, nextTarget.y + 2.4);
+  startCameraFlight(nextPosition, nextTarget, 0.92);
+}
+
 function setupScene() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color('#0a1726');
@@ -634,6 +978,7 @@ function setupScene() {
 
   createCampusBase();
   props.buildings.forEach(createBuilding);
+  createDeviceLayer();
   updateCategoryVisibility();
   updateHighlights();
   updateRoute();
@@ -666,12 +1011,19 @@ function handlePointerUp(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
+  const deviceHits = raycaster.intersectObjects(devicePickables, false);
+  const visibleDeviceHit = deviceHits.find((hit) => hit.object.visible);
+  if (visibleDeviceHit?.object.userData.deviceId) {
+    emit('selectDevice', visibleDeviceHit.object.userData.deviceId);
+    return;
+  }
   const hits = raycaster.intersectObjects(interactiveMeshes, false);
-  if (!hits.length) {
+  const buildingHit = hits.find((hit) => hit.object.visible && hit.object.userData.building);
+  if (!buildingHit) {
     return;
   }
 
-  const building = hits[0].object.userData.building;
+  const building = buildingHit.object.userData.building;
   if (building) {
     emit('selectBuilding', building);
   }
@@ -686,14 +1038,23 @@ function handlePointerMove(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
+  const deviceHits = raycaster.intersectObjects(devicePickables, false);
+  const visibleDeviceHit = deviceHits.find((hit) => hit.object.visible);
+  if (visibleDeviceHit?.object.userData.deviceId) {
+    hoveredDeviceId = visibleDeviceHit.object.userData.deviceId;
+    renderer.domElement.style.cursor = 'pointer';
+    return;
+  }
+  hoveredDeviceId = '';
   const hits = raycaster.intersectObjects(interactiveMeshes, false);
-  const building = hits[0]?.object.userData.building;
+  const building = hits.find((hit) => hit.object.visible)?.object.userData.building;
   hoveredBuildingId = building?.id || '';
   renderer.domElement.style.cursor = building ? 'pointer' : 'grab';
 }
 
 function handlePointerLeave() {
   hoveredBuildingId = '';
+  hoveredDeviceId = '';
   if (renderer?.domElement) {
     renderer.domElement.style.cursor = 'grab';
   }
@@ -708,13 +1069,14 @@ function updateCategoryVisibility() {
 
     group.visible = props.activeCategory === 'all' || building.category === props.activeCategory;
   });
+  updateDeviceVisibility();
 }
 
 function updateHighlights() {
   buildingGroups.forEach((group, id) => {
     const isActive = id === props.selectedBuildingId || id === props.focusedBuildingId;
     group.traverse((child) => {
-      if (!child.isMesh || !child.material.color) {
+      if (!child.isMesh || !child.material.color || child.userData.deviceId || child.userData.isLabel) {
         return;
       }
 
@@ -901,7 +1263,7 @@ function updateEnvironment() {
 
   buildingGroups.forEach((group) => {
     group.traverse((child) => {
-      if (child.isMesh && child.material?.emissive) {
+      if (child.isMesh && child.material?.emissive && !child.userData.deviceId) {
         child.material.emissiveIntensity = props.sceneMode === 'night' ? 0.22 : 0.05;
       }
     });
@@ -1162,6 +1524,48 @@ function animate() {
     });
   }
 
+  deviceGroups.forEach((group, id) => {
+    const device = props.devices.find((item) => item.id === id);
+    if (!device) {
+      return;
+    }
+    const saving = props.energyBuildingIds.has('__all__') || props.energyBuildingIds.has(device.buildingId);
+    group.children.forEach((child) => {
+      if (child.userData.deviceHalo) {
+        if (device.isFault) {
+          const pulse = 0.46 + (Math.sin(elapsed * 6.4) + 1) * 0.32;
+          child.material.opacity = pulse;
+          const scale = 1.2 + (Math.sin(elapsed * 6.4) + 1) * 0.22;
+          child.scale.set(scale, scale, 1);
+        }
+      }
+      if (child.userData.deviceSelectRing) {
+        const selected = id === props.selectedDeviceId;
+        if (selected) {
+          child.visible = true;
+          const scale = 1 + Math.sin(elapsed * 4.5) * 0.14;
+          child.scale.setScalar(scale);
+        } else {
+          child.visible = false;
+        }
+      }
+      if (child.userData.deviceEnergyRing && saving && !device.isFault) {
+        child.material.opacity = 0.45 + (Math.sin(elapsed * 3 + id.length) + 1) * 0.22;
+      }
+    });
+    if (group.userData.fanHolder && !device.isFault) {
+      group.userData.fanHolder.rotation.z = elapsed * (saving ? 1.6 : 4.2);
+    } else if (group.userData.fanHolder) {
+      group.userData.fanHolder.rotation.z = elapsed * 6.5;
+    }
+    const label = deviceLabels.get(id);
+    if (label) {
+      const isSelected = id === props.selectedDeviceId;
+      const isHovered = id === hoveredDeviceId;
+      label.visible = group.visible && (isSelected || isHovered);
+    }
+  });
+
   controls.update();
   if (frameCount % 12 === 0) {
     const direction = camera.position.clone().sub(controls.target);
@@ -1193,6 +1597,19 @@ onBeforeUnmount(() => {
   renderer?.domElement.removeEventListener('pointerup', handlePointerUp);
   resizeObserver?.disconnect();
   controls?.dispose();
+  Object.values(deviceGeometries).forEach((geometry) => {
+    if (geometry?.dispose) {
+      geometry.dispose();
+    }
+  });
+  glowTexture?.dispose();
+  deviceGroups.forEach((group) => {
+    group.traverse((child) => {
+      if (child.material) {
+        child.material.dispose();
+      }
+    });
+  });
   renderer?.dispose();
 });
 
@@ -1203,6 +1620,19 @@ watch(() => props.route, updateRoute, { deep: true });
 watch(() => props.routeFocusKey, () => focusRoute());
 watch(() => props.cameraFocusKey, () => focusBuilding(props.selectedBuildingId, props.cameraMode));
 watch(() => props.sceneMode, updateEnvironment);
+watch(() => props.deviceLayerOn, updateDeviceVisibility);
+watch(() => [props.deviceFilter.building, props.deviceFilter.type, props.deviceFilter.abnormalOnly], updateDeviceVisibility);
+watch(() => props.activeCategory, updateDeviceVisibility);
+watch(() => props.deviceVersion, () => {
+  updateDeviceVisibility();
+  updateDeviceVisuals();
+});
+watch(() => props.energyVersion, updateDeviceVisuals);
+watch(() => props.focusDeviceKey, (key) => {
+  if (key > 0 && props.selectedDeviceId) {
+    focusDevice(props.selectedDeviceId);
+  }
+});
 </script>
 
 <template>
