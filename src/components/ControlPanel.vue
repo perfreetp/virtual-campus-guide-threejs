@@ -26,6 +26,26 @@ const props = defineProps({
   endId: {
     type: String,
     required: true
+  },
+  waypointIds: {
+    type: Array,
+    default: () => []
+  },
+  travelMode: {
+    type: String,
+    default: 'walk'
+  },
+  routePlan: {
+    type: Object,
+    default: null
+  },
+  tourActive: {
+    type: Boolean,
+    default: false
+  },
+  tourPaused: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -33,8 +53,14 @@ const emit = defineEmits([
   'update:category',
   'update:startId',
   'update:endId',
+  'update:waypointIds',
+  'update:travelMode',
   'search',
-  'routePick'
+  'routePick',
+  'tour-start',
+  'tour-toggle-pause',
+  'tour-stop',
+  'save-route'
 ]);
 
 const searchKeyword = ref('');
@@ -50,6 +76,17 @@ const searchOptions = computed(() => {
   });
 });
 
+const waypointCandidates = computed(() => {
+  const usedIds = new Set([props.startId, props.endId, ...props.waypointIds]);
+  return props.buildings.filter((building) => !usedIds.has(building.id));
+});
+
+const waypointNames = computed(() => {
+  return props.waypointIds
+    .map((id) => props.buildings.find((building) => building.id === id)?.name)
+    .filter(Boolean);
+});
+
 function handleSearchSubmit() {
   const keyword = searchKeyword.value.trim().toLowerCase();
   const matched = props.buildings.find((building) => {
@@ -57,6 +94,20 @@ function handleSearchSubmit() {
   }) || searchOptions.value[0];
 
   emit('search', matched);
+}
+
+function addWaypoint(event) {
+  const id = event.target.value;
+  event.target.value = '';
+  if (!id || props.waypointIds.includes(id)) {
+    return;
+  }
+
+  emit('update:waypointIds', [...props.waypointIds, id]);
+}
+
+function removeWaypoint(id) {
+  emit('update:waypointIds', props.waypointIds.filter((item) => item !== id));
 }
 </script>
 
@@ -96,6 +147,19 @@ function handleSearchSubmit() {
     </form>
 
     <div class="route-box">
+      <div class="mode-switch" role="tablist" aria-label="出行方式">
+        <button
+          type="button"
+          :class="{ active: travelMode === 'walk' }"
+          @click="emit('update:travelMode', 'walk')"
+        >步行</button>
+        <button
+          type="button"
+          :class="{ active: travelMode === 'bike' }"
+          @click="emit('update:travelMode', 'bike')"
+        >骑行</button>
+      </div>
+
       <div class="route-selects">
         <label>
           <span>起点</span>
@@ -113,6 +177,67 @@ function handleSearchSubmit() {
             </option>
           </select>
         </label>
+      </div>
+
+      <div class="waypoint-row">
+        <span class="waypoint-caption">途经点（按顺序经过）</span>
+        <div v-if="waypointNames.length" class="waypoint-tags">
+          <span v-for="(name, index) in waypointNames" :key="waypointIds[index]" class="waypoint-tag">
+            <em>{{ index + 1 }}</em>{{ name }}
+            <button type="button" aria-label="移除途经点" @click="removeWaypoint(waypointIds[index])">×</button>
+          </span>
+        </div>
+        <select aria-label="添加途经点" @change="addWaypoint">
+          <option value="">＋ 添加途经点</option>
+          <option v-for="building in waypointCandidates" :key="building.id" :value="building.id">
+            {{ building.name }}
+          </option>
+        </select>
+      </div>
+
+      <div v-if="routePlan?.reachable" class="route-summary" :class="travelMode">
+        <div>
+          <span>全程</span>
+          <strong>{{ routePlan.distanceMeters }}</strong>
+          <em>米</em>
+        </div>
+        <div>
+          <span>预计用时</span>
+          <strong>{{ routePlan.etaMinutes }}</strong>
+          <em>分钟</em>
+        </div>
+        <div>
+          <span>途经点</span>
+          <strong>{{ Math.max(routePlan.stops.length - 2, 0) }}</strong>
+          <em>个</em>
+        </div>
+      </div>
+
+      <p v-else-if="routePlan?.unreachableLeg" class="route-warning" role="alert">
+        <b>路径不可达</b>
+        {{ routePlan.unreachableLeg.reason }}
+      </p>
+
+      <div class="tour-controls">
+        <template v-if="!tourActive">
+          <button
+            class="tour-primary"
+            type="button"
+            :disabled="!routePlan?.reachable"
+            @click="emit('tour-start')"
+          >▶ 沿路线飞行浏览</button>
+          <button
+            type="button"
+            :disabled="!routePlan?.reachable"
+            @click="emit('save-route')"
+          >收藏路线</button>
+        </template>
+        <template v-else>
+          <button class="tour-primary" type="button" @click="emit('tour-toggle-pause')">
+            {{ tourPaused ? '继续' : '暂停' }}
+          </button>
+          <button type="button" @click="emit('tour-stop')">结束浏览</button>
+        </template>
       </div>
 
       <div class="route-buttons">

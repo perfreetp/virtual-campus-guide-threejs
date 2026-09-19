@@ -29,7 +29,10 @@
 - 建筑交互：点击建筑后高亮并展示名称、分类、简介、开放时间和功能说明。
 - 分类筛选：支持教学区、生活区、运动区、服务区等建筑分类切换。
 - 搜索定位：可按建筑名称或功能搜索，并自动聚焦到目标建筑。
-- 路线导航：选择起点和终点后，在 3D 场景中显示发光路线，并同步到小地图。
+- 智能路线规划：支持起点、终点与多个途经点，步行 / 骑行双模式自动计算最优路径，地面发光高亮并同步小地图；路径不可达时给出友好提示。
+- 沿路线飞行浏览：镜头沿规划路径平滑飞行，途经点依次高亮并标注名称与累计距离，支持暂停、继续与结束。
+- 实时人流热力：地面热力圆盘按楼栋人流密度变色，支持按院系与楼栋筛选，点击热区弹出楼层、人数、容量与预警信息，数据每 5 秒模拟刷新。
+- 个人中心：保存路线、收藏建筑与最近导览记录通过 localStorage 持久化，刷新页面不丢失，历史记录支持一键回放路线与镜头动画。
 - 镜头控制：提供近景、俯视、环绕等视角模式。
 - 场景氛围：支持白天、夜景、雨天模式切换。
 - 全景浏览：隐藏 HUD 面板后可沉浸式查看 3D 校园场景。
@@ -69,19 +72,28 @@ npm run build
 ```text
 src/
   components/
-    CampusScene.vue       # Three.js 校园场景
-    ControlPanel.vue      # 搜索、筛选和路线控制
-    InfoPanel.vue         # 建筑信息面板
+    CampusScene.vue       # Three.js 校园场景（路线、飞行、热力层、收藏标记）
+    ControlPanel.vue      # 搜索、筛选、路线规划与飞行控制
+    InfoPanel.vue         # 建筑信息面板（收藏、实时人流）
+    HeatmapPanel.vue      # 实时人流热力筛选面板
+    HeatPopup.vue         # 楼栋人流详情弹窗
+    PersonalCenter.vue    # 保存路线 / 收藏 / 导览历史
     StatsCards.vue        # 数据卡片
+  composables/
+    useProfile.js         # 个人中心状态与 localStorage 持久化
   mock/
     campusData.js         # 校园建筑与推荐路线数据
+    campusMeta.js         # 院系、楼层等楼栋元数据
+    crowdData.js          # 实时人流模拟数据
   styles/
     global.css            # 全局样式与大屏 UI
   three/
     builders/
       primitives.js       # 基础几何体构建工具
   utils/
-    pathfinding.js        # 校园路径计算与小地图坐标
+    pathfinding.js        # 多途经点 / 步行骑行路径规划
+    heatmap.js            # 热力等级、配色与预警文案
+    storage.js            # 本地存储读写
   App.vue
   main.js
 ```

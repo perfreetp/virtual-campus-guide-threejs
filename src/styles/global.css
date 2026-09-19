@@ -847,3 +847,809 @@ button {
     height: 560px;
   }
 }
+
+/* ===== 个人中心入口 ===== */
+.profile-toggle {
+  position: absolute;
+  z-index: 8;
+  top: 92px;
+  right: 132px;
+  min-height: 36px;
+  border: 1px solid rgba(72, 214, 255, 0.36);
+  border-radius: 999px;
+  background: rgba(4, 31, 52, 0.56);
+  color: #d8fbff;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: 0 0 22px rgba(40, 220, 255, 0.18);
+  backdrop-filter: blur(10px);
+}
+
+.profile-toggle:hover {
+  border-color: #35e9ff;
+  background: rgba(17, 142, 190, 0.6);
+}
+
+/* ===== 控制面板：模式切换 / 途经点 / 路线信息 ===== */
+.mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mode-switch button {
+  min-height: 34px;
+  border: 1px solid rgba(72, 214, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(7, 48, 76, 0.86);
+  color: #bfefff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.mode-switch button.active {
+  border-color: #31e3ff;
+  background: linear-gradient(180deg, #20c6ee, #087ab8);
+  color: #ffffff;
+  box-shadow: 0 0 18px rgba(32, 210, 255, 0.35);
+}
+
+.waypoint-row {
+  display: grid;
+  gap: 6px;
+}
+
+.waypoint-caption {
+  color: #79ddff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.waypoint-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.waypoint-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(255, 178, 61, 0.5);
+  border-radius: 999px;
+  background: rgba(92, 56, 8, 0.45);
+  color: #ffe2b2;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.waypoint-tag em {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 50%;
+  background: #ffb23d;
+  color: #1a1206;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.waypoint-tag button {
+  border: 0;
+  background: transparent;
+  color: #ffd39b;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+}
+
+.waypoint-row select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px dashed rgba(72, 214, 255, 0.35);
+  border-radius: 6px;
+  background: rgba(1, 19, 34, 0.82);
+  color: #9fe7ff;
+  padding: 0 10px;
+}
+
+.route-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  border: 1px solid rgba(72, 214, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(5, 35, 56, 0.55);
+  padding: 8px;
+  text-align: center;
+}
+
+.route-summary.bike {
+  border-color: rgba(70, 255, 170, 0.35);
+}
+
+.route-summary span {
+  display: block;
+  color: rgba(205, 245, 255, 0.68);
+  font-size: 11px;
+}
+
+.route-summary strong {
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.route-summary em {
+  color: #57e9ff;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.route-warning {
+  margin: 0;
+  border: 1px solid rgba(255, 110, 110, 0.55);
+  border-radius: 8px;
+  background: rgba(92, 20, 26, 0.45);
+  color: #ffd7d7;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.route-warning b {
+  color: #ff8e8e;
+  margin-right: 6px;
+}
+
+.route-warning.compact {
+  margin-top: 8px;
+}
+
+.tour-controls {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.tour-controls button {
+  min-height: 36px;
+  border: 1px solid rgba(72, 214, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(7, 48, 76, 0.86);
+  color: #bfefff;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.tour-controls button.tour-primary {
+  border-color: #31e3ff;
+  background: linear-gradient(180deg, #20c6ee, #087ab8);
+  color: #ffffff;
+  box-shadow: 0 0 18px rgba(32, 210, 255, 0.35);
+}
+
+.tour-controls button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.route-stats-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.route-stats-inline span {
+  border: 1px solid rgba(72, 214, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(4, 33, 53, 0.5);
+  color: #a6eeff;
+  padding: 3px 9px;
+  font-size: 11px;
+}
+
+/* ===== 热力图层面板 ===== */
+.heat-panel {
+  padding: 12px;
+}
+
+.heat-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 20px;
+}
+
+.heat-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.heat-switch i {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  transition: background 220ms ease;
+}
+
+.heat-switch i::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #dffaff;
+  transition: transform 220ms ease;
+}
+
+.heat-switch input:checked + i {
+  background: linear-gradient(180deg, #20c6ee, #087ab8);
+}
+
+.heat-switch input:checked + i::after {
+  transform: translateX(20px);
+}
+
+.heat-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.heat-meta b {
+  color: #ff7e76;
+  font-size: 22px;
+}
+
+.heat-meta span {
+  color: rgba(223, 250, 255, 0.78);
+  font-size: 12px;
+}
+
+.heat-meta em {
+  margin-left: auto;
+  color: rgba(150, 225, 255, 0.72);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.heat-filters {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.heat-filters select {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid rgba(72, 214, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(1, 19, 34, 0.82);
+  color: #e9fbff;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.heat-rank {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.heat-rank button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  width: 100%;
+  border: 1px solid rgba(77, 221, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(2, 24, 40, 0.62);
+  color: #dffaff;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.heat-rank button.active {
+  border-color: #39e7ff;
+  background: rgba(16, 128, 174, 0.42);
+}
+
+.heat-rank button span {
+  font-size: 12px;
+}
+
+.heat-rank button strong {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+  font-size: 13px;
+}
+
+.heat-rank button i {
+  grid-column: 1;
+  height: 5px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.heat-rank button i::before {
+  content: none;
+}
+
+.heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.heat-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(223, 250, 255, 0.72);
+  font-size: 10px;
+}
+
+.heat-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.heat-tip {
+  margin: 8px 0 0;
+  color: rgba(150, 225, 255, 0.66);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+/* ===== 热区弹窗 ===== */
+.heat-popup {
+  position: absolute;
+  z-index: 9;
+  right: 28px;
+  bottom: 22px;
+  width: 288px;
+  padding: 14px;
+  border-color: rgba(255, 150, 120, 0.35);
+}
+
+.heat-popup-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  border: 0;
+  background: transparent;
+  color: rgba(223, 250, 255, 0.72);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.heat-popup-faculty {
+  margin: 0 0 10px;
+  color: rgba(180, 235, 255, 0.72);
+  font-size: 12px;
+}
+
+.heat-popup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.heat-popup-grid div {
+  border: 1px solid rgba(77, 221, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(2, 24, 40, 0.5);
+  padding: 8px;
+}
+
+.heat-popup-grid span {
+  display: block;
+  color: rgba(213, 245, 255, 0.66);
+  font-size: 11px;
+}
+
+.heat-popup-grid strong {
+  color: #ffffff;
+  font-size: 17px;
+}
+
+.heat-popup-warning {
+  margin: 10px 0 0;
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.heat-popup-warning.red {
+  border: 1px solid rgba(255, 77, 109, 0.55);
+  background: rgba(102, 18, 36, 0.5);
+  color: #ffc2cd;
+}
+
+.heat-popup-warning.yellow {
+  border: 1px solid rgba(255, 211, 77, 0.5);
+  background: rgba(92, 68, 8, 0.4);
+  color: #ffe9a8;
+}
+
+.heat-popup-warning:not(.red):not(.yellow) {
+  border: 1px solid rgba(47, 230, 166, 0.4);
+  background: rgba(10, 70, 50, 0.4);
+  color: #b8ffe6;
+}
+
+.heat-popup-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.heat-popup-actions button {
+  flex: 1;
+  min-height: 32px;
+  border: 1px solid rgba(72, 214, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(7, 48, 76, 0.86);
+  color: #bfefff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.heat-popup-time {
+  display: block;
+  margin-top: 8px;
+  color: rgba(150, 225, 255, 0.55);
+  font-size: 10px;
+  font-style: normal;
+}
+
+/* ===== 信息面板：收藏与人流 ===== */
+.info-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.favorite-btn {
+  border: 1px solid rgba(255, 211, 77, 0.5);
+  border-radius: 999px;
+  background: rgba(92, 68, 8, 0.35);
+  color: #ffd39b;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.favorite-btn.active {
+  background: rgba(255, 196, 60, 0.9);
+  color: #2a1c02;
+  box-shadow: 0 0 16px rgba(255, 205, 80, 0.4);
+}
+
+.faculty-pill {
+  margin-left: 6px;
+}
+
+.info-crowd i {
+  display: block;
+  height: 8px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.info-crowd i em {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.info-crowd-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.info-warning {
+  margin: 6px 0 0;
+  font-size: 11px;
+}
+
+.info-warning.red {
+  color: #ff8fa3;
+}
+
+.info-warning.yellow {
+  color: #ffd982;
+}
+
+.info-warning:not(.red):not(.yellow) {
+  color: #7df5c8;
+}
+
+/* ===== 飞行浏览 HUD ===== */
+.tour-hud {
+  position: absolute;
+  z-index: 9;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  min-width: 320px;
+  padding: 10px 14px;
+  text-align: center;
+}
+
+.tour-hud-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+
+.tour-hud-title span {
+  color: #baf8ff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.tour-hud-title button {
+  border: 1px solid rgba(72, 214, 255, 0.35);
+  border-radius: 6px;
+  background: rgba(7, 48, 76, 0.86);
+  color: #bfefff;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tour-hud p {
+  margin: 6px 0 0;
+  color: rgba(223, 250, 255, 0.82);
+  font-size: 12px;
+}
+
+.tour-hud p em {
+  display: inline-block;
+  border-radius: 999px;
+  background: rgba(32, 198, 238, 0.25);
+  color: #9fefff;
+  padding: 1px 8px;
+  margin-right: 6px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.tour-hud-enter-active,
+.tour-hud-leave-active {
+  transition: opacity 260ms ease, transform 260ms ease;
+}
+
+.tour-hud-enter-from,
+.tour-hud-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 16px);
+}
+
+/* ===== 小地图途经点 ===== */
+.map-stop {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  background: #ffb23d;
+  box-shadow: 0 0 8px rgba(255, 178, 61, 0.7);
+  pointer-events: none;
+}
+
+.mini-route polyline.bike {
+  stroke: #57ffae;
+  filter: drop-shadow(0 0 4px rgba(47, 255, 174, 0.8));
+}
+
+/* ===== 个人中心抽屉 ===== */
+.personal-mask {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  background: rgba(3, 12, 24, 0.5);
+  backdrop-filter: blur(3px);
+}
+
+.personal-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  width: min(440px, 92vw);
+  height: 100%;
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(10, 41, 62, 0.92), rgba(4, 24, 40, 0.94)),
+    rgba(6, 25, 42, 0.9);
+  padding: 22px;
+  overflow-y: auto;
+  animation: personal-slide 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes personal-slide {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.personal-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.personal-heading h2 {
+  margin: 4px 0 0;
+  color: #ffffff;
+  font-size: 22px;
+}
+
+.personal-heading > button {
+  border: 1px solid rgba(72, 214, 255, 0.3);
+  border-radius: 50%;
+  background: rgba(7, 48, 76, 0.8);
+  color: #d8fbff;
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.personal-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.personal-summary div {
+  border: 1px solid rgba(77, 221, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(2, 24, 40, 0.55);
+  padding: 10px;
+  text-align: center;
+}
+
+.personal-summary strong {
+  display: block;
+  color: #ffffff;
+  font-size: 22px;
+}
+
+.personal-summary span {
+  color: rgba(205, 245, 255, 0.66);
+  font-size: 11px;
+}
+
+.personal-section h3 {
+  margin: 0 0 8px;
+  color: #73dfff;
+  font-size: 14px;
+}
+
+.personal-empty {
+  margin: 0;
+  border: 1px dashed rgba(72, 214, 255, 0.3);
+  border-radius: 8px;
+  color: rgba(205, 245, 255, 0.62);
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.personal-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.personal-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(77, 221, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(2, 24, 40, 0.55);
+  padding: 10px;
+}
+
+.personal-list li > div:first-child {
+  min-width: 0;
+}
+
+.personal-list strong {
+  display: block;
+  color: #f2fcff;
+  font-size: 13px;
+}
+
+.personal-list em {
+  display: block;
+  margin-top: 3px;
+  color: rgba(205, 245, 255, 0.72);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.personal-list span {
+  display: block;
+  margin-top: 3px;
+  color: #57e7ff;
+  font-size: 11px;
+}
+
+.personal-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.personal-actions button {
+  border: 1px solid rgba(72, 214, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(7, 48, 76, 0.86);
+  color: #bfefff;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.personal-actions button.tour-primary {
+  border-color: #31e3ff;
+  background: linear-gradient(180deg, #20c6ee, #087ab8);
+  color: #ffffff;
+}
+
+.personal-actions button.danger {
+  border-color: rgba(255, 120, 120, 0.4);
+  color: #ffb3b3;
+}
+
+/* 控制面板内容较多时允许滚动 */
+.control-panel {
+  max-height: calc(100vh - 116px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 224, 255, 0.35) transparent;
+}
+
+.left-hud {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(55, 224, 255, 0.35) transparent;
+  padding-right: 4px;
+}

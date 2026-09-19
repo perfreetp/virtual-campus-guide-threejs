@@ -1,3 +1,7 @@
+import { applyBuildingMeta, faculties, facultyNames } from './campusMeta.js';
+
+export { faculties, facultyNames };
+
 export const categories = [
   { label: '全部', value: 'all' },
   { label: '教学区', value: 'teaching' },
@@ -274,3 +278,5 @@ export const recommendedRoutes = [
   { id: 'route-sports', name: '活力运动线', start: 'teaching-a', end: 'playground' },
   { id: 'route-landmark', name: '地标打卡线', start: 'clocktower', end: 'twin-center' }
 ];
+
+applyBuildingMeta(campusBuildings);

@@ -24,28 +24,31 @@ const roadNodes = [
   ['n_parking', 15.2, 6.2]
 ].map(([id, x, z]) => ({ id, x, z }));
 
+// 边标记：walkOnly 表示步行街 / 健身步道，骑行模式不可通行；bikeAvenue 为骑行主通道
 const roadEdges = [
-  ['n_gate', 'n_clock'],
-  ['n_clock', 'n_gym'],
-  ['n_gym', 'n_west_mid'],
-  ['n_west_mid', 'n_center'],
-  ['n_center', 'n_east_mid'],
-  ['n_east_mid', 'n_innovation'],
-  ['n_innovation', 'n_parking'],
-  ['n_parking', 'n_dorm_north'],
-  ['n_dorm_north', 'n_dorm_south'],
-  ['n_west_mid', 'n_west_north'],
+  ['n_gate', 'n_clock', { bikeAvenue: true }],
+  ['n_clock', 'n_gym', { bikeAvenue: true }],
+  ['n_gym', 'n_west_mid', { bikeAvenue: true }],
+  ['n_west_mid', 'n_center', { bikeAvenue: true }],
+  ['n_center', 'n_east_mid', { bikeAvenue: true }],
+  ['n_east_mid', 'n_innovation', { bikeAvenue: true }],
+  ['n_innovation', 'n_parking', { bikeAvenue: true }],
+  ['n_parking', 'n_dorm_north', { bikeAvenue: true }],
+  ['n_dorm_north', 'n_dorm_south', { bikeAvenue: true }],
+  ['n_west_mid', 'n_west_north', { bikeAvenue: true }],
   ['n_west_north', 'n_academy'],
-  ['n_west_north', 'n_playground'],
-  ['n_playground', 'n_pool'],
-  ['n_pool', 'n_twin'],
-  ['n_twin', 'n_library'],
-  ['n_library', 'n_center'],
+  ['n_west_north', 'n_playground', { walkOnly: true }],
+  ['n_playground', 'n_pool', { walkOnly: true }],
+  ['n_west_mid', 'n_twin', { walkOnly: true }],
+  ['n_west_mid', 'n_library', { walkOnly: true }],
+  ['n_pool', 'n_twin', { walkOnly: true }],
+  ['n_twin', 'n_library', { bikeAvenue: true }],
+  ['n_library', 'n_center', { bikeAvenue: true }],
   ['n_center', 'n_admin'],
-  ['n_center', 'n_canteen'],
+  ['n_center', 'n_canteen', { bikeAvenue: true }],
   ['n_canteen', 'n_market'],
-  ['n_canteen', 'n_dorm_north'],
-  ['n_east_mid', 'n_east_north'],
+  ['n_canteen', 'n_dorm_north', { bikeAvenue: true }],
+  ['n_east_mid', 'n_east_north', { bikeAvenue: true }],
   ['n_east_north', 'n_lab'],
   ['n_east_north', 'n_solar'],
   ['n_east_north', 'n_clinic'],
@@ -76,16 +79,25 @@ const buildingAnchors = {
   parking: 'n_parking'
 };
 
+const UNIT_METERS = 5;
+const MODE_SPEED = { walk: 1.4, bike: 4.2 };
+const BIKE_AVENUE_FACTOR = 0.82;
+const MODE_LABEL = { walk: '步行', bike: '骑行' };
+
 function distance(a, b) {
   return Math.hypot(a.x - b.x, a.z - b.z);
 }
 
-function buildGraph() {
+function buildGraph(mode) {
   const nodes = new Map(roadNodes.map((node) => [node.id, { ...node, edges: [] }]));
-  roadEdges.forEach(([from, to]) => {
+  roadEdges.forEach(([from, to, flags = {}]) => {
+    if (mode === 'bike' && flags.walkOnly) {
+      return;
+    }
+
     const a = nodes.get(from);
     const b = nodes.get(to);
-    const weight = distance(a, b);
+    const weight = distance(a, b) * (mode === 'bike' && flags.bikeAvenue ? BIKE_AVENUE_FACTOR : 1);
     a.edges.push({ id: to, weight });
     b.edges.push({ id: from, weight });
   });
@@ -98,14 +110,7 @@ function nearestNodeId(point) {
   }, roadNodes[0]).id;
 }
 
-export function findCampusPath(startBuilding, endBuilding) {
-  if (!startBuilding || !endBuilding) {
-    return [];
-  }
-
-  const graph = buildGraph();
-  const startNodeId = buildingAnchors[startBuilding.id] || nearestNodeId({ x: startBuilding.position[0], z: startBuilding.position[2] });
-  const endNodeId = buildingAnchors[endBuilding.id] || nearestNodeId({ x: endBuilding.position[0], z: endBuilding.position[2] });
+function aStar(graph, startNodeId, endNodeId) {
   const open = new Set([startNodeId]);
   const cameFrom = new Map();
   const gScore = new Map([[startNodeId, 0]]);
@@ -123,15 +128,7 @@ export function findCampusPath(startBuilding, endBuilding) {
         cursor = cameFrom.get(cursor);
         path.unshift(cursor);
       }
-
-      return [
-        { x: startBuilding.position[0], z: startBuilding.position[2] },
-        ...path.map((id) => {
-          const node = graph.get(id);
-          return { x: node.x, z: node.z };
-        }),
-        { x: endBuilding.position[0], z: endBuilding.position[2] }
-      ];
+      return path;
     }
 
     open.delete(current);
@@ -146,11 +143,133 @@ export function findCampusPath(startBuilding, endBuilding) {
     });
   }
 
-  return [
-    { x: startBuilding.position[0], z: startBuilding.position[2] },
-    { x: endBuilding.position[0], z: endBuilding.position[2] }
-  ];
+  return null;
 }
+
+function resolveAnchor(building) {
+  if (!building) {
+    return '';
+  }
+
+  return buildingAnchors[building.id]
+    || nearestNodeId({ x: building.position[0], z: building.position[2] });
+}
+
+function describeUnreachable(endBuilding, walkSucceeds) {
+  if (walkSucceeds) {
+    return `「${endBuilding.name}」位于步行街区，骑行无法直达，请切换步行模式或就近停车后步行前往`;
+  }
+
+  return `当前校园路网暂未连通「${endBuilding.name}」，请选择其他地点`;
+}
+
+export function planCampusRoute(stopBuildings, mode = 'walk') {
+  const stops = (stopBuildings || []).filter(Boolean);
+  const emptyPlan = {
+    reachable: false,
+    mode,
+    stops,
+    points: [],
+    segments: [],
+    distance: 0,
+    distanceMeters: 0,
+    etaMinutes: 0,
+    unreachableLeg: null
+  };
+
+  if (stops.length < 2) {
+    return emptyPlan;
+  }
+
+  const graph = buildGraph(mode);
+  const walkGraph = buildGraph('walk');
+  const segments = [];
+  let totalDistance = 0;
+  const points = [];
+
+  for (let index = 0; index < stops.length - 1; index += 1) {
+    const from = stops[index];
+    const to = stops[index + 1];
+    const segment = {
+      fromId: from.id,
+      toId: to.id,
+      fromName: from.name,
+      toName: to.name,
+      points: [],
+      distance: 0
+    };
+
+    if (from.id === to.id) {
+      segment.points = [{ x: from.position[0], z: from.position[2] }];
+      segments.push(segment);
+      continue;
+    }
+
+    const startNodeId = resolveAnchor(from);
+    const endNodeId = resolveAnchor(to);
+    const nodePath = aStar(graph, startNodeId, endNodeId);
+
+    if (!nodePath) {
+      const walkPath = aStar(walkGraph, resolveAnchor(from), resolveAnchor(to));
+      return {
+        ...emptyPlan,
+        stops,
+        points,
+        segments,
+        distance: totalDistance,
+        distanceMeters: Math.round(totalDistance * UNIT_METERS),
+        unreachableLeg: {
+          fromId: from.id,
+          toId: to.id,
+          reason: describeUnreachable(to, Boolean(walkPath))
+        }
+      };
+    }
+
+    const segmentPoints = [
+      { x: from.position[0], z: from.position[2] },
+      ...nodePath.slice(1, -1).map((id) => {
+        const node = graph.get(id);
+        return { x: node.x, z: node.z };
+      }),
+      { x: to.position[0], z: to.position[2] }
+    ];
+    segment.points = segmentPoints;
+    segment.distance = segmentPoints.reduce((sum, point, pointIndex) => {
+      if (pointIndex === 0) {
+        return 0;
+      }
+      const previous = segmentPoints[pointIndex - 1];
+      return sum + Math.hypot(point.x - previous.x, point.z - previous.z);
+    }, 0);
+
+    segmentPoints.forEach((point) => {
+      const previous = points.at(-1);
+      if (!previous || Math.hypot(previous.x - point.x, previous.z - point.z) > 0.01) {
+        points.push(point);
+      }
+    });
+    totalDistance += segment.distance;
+    segments.push(segment);
+  }
+
+  const distanceMeters = Math.round(totalDistance * UNIT_METERS);
+  const etaMinutes = Math.max(1, Math.round((distanceMeters / MODE_SPEED[mode] / 60) * 10) / 10);
+
+  return {
+    reachable: true,
+    mode,
+    stops,
+    points,
+    segments,
+    distance: totalDistance,
+    distanceMeters,
+    etaMinutes,
+    unreachableLeg: null
+  };
+}
+
+export { MODE_LABEL, UNIT_METERS };
 
 export function toMiniMapPoint(point) {
   return {

@@ -1,27 +1,62 @@
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CampusScene from './components/CampusScene.vue';
 import ControlPanel from './components/ControlPanel.vue';
 import InfoPanel from './components/InfoPanel.vue';
+import HeatmapPanel from './components/HeatmapPanel.vue';
+import HeatPopup from './components/HeatPopup.vue';
+import PersonalCenter from './components/PersonalCenter.vue';
 import { campusBuildings, categoryNames, recommendedRoutes } from './mock/campusData';
-import { findCampusPath, toMiniMapPoint } from './utils/pathfinding';
+import { createCrowdSnapshot, getCrowdEntry } from './mock/crowdData';
+import { planCampusRoute, toMiniMapPoint, MODE_LABEL } from './utils/pathfinding';
+import { useProfile } from './composables/useProfile';
+
+const {
+  favoriteIds,
+  savedRoutes,
+  history,
+  isFavorite,
+  toggleFavorite,
+  saveRoute,
+  removeRoute,
+  addHistory,
+  removeHistory
+} = useProfile();
 
 const activeCategory = ref('all');
 const selectedBuildingId = ref(campusBuildings[0].id);
 const focusedBuildingId = ref(campusBuildings[0].id);
 const routeStartId = ref('gate');
 const routeEndId = ref('library');
+const routeWaypointIds = ref([]);
+const travelMode = ref('walk');
 const routeFocusKey = ref(0);
 const cameraMode = ref('near');
 const cameraFocusKey = ref(0);
 const sceneMode = ref('day');
 const cameraHeading = ref(45);
 const panoramaMode = ref(false);
+
+const heatEnabled = ref(false);
+const heatFaculty = ref('all');
+const heatBuildingId = ref('');
+const crowdSnapshot = ref(createCrowdSnapshot(campusBuildings));
+let crowdTimer;
+
+const tourActive = ref(false);
+const tourPaused = ref(false);
+const tourKey = ref(0);
+const tourStopKey = ref(0);
+const activeTourStop = ref(null);
+
+const personalOpen = ref(false);
 let buildingSelectTimer;
 
 const selectedBuilding = computed(() => {
   return campusBuildings.find((building) => building.id === selectedBuildingId.value) || campusBuildings[0];
 });
+
+const selectedCrowdEntry = computed(() => getCrowdEntry(crowdSnapshot.value, selectedBuildingId.value));
 
 const filteredBuildings = computed(() => {
   if (activeCategory.value === 'all') {
@@ -31,21 +66,27 @@ const filteredBuildings = computed(() => {
   return campusBuildings.filter((building) => building.category === activeCategory.value);
 });
 
-const route = computed(() => {
-  if (!routeStartId.value || !routeEndId.value || routeStartId.value === routeEndId.value) {
+const routeStops = computed(() => {
+  const ids = [routeStartId.value, ...routeWaypointIds.value, routeEndId.value];
+  const unique = ids.filter((id, index) => ids.indexOf(id) === index);
+  return unique
+    .map((id) => campusBuildings.find((building) => building.id === id))
+    .filter(Boolean);
+});
+
+const routePlan = computed(() => {
+  if (routeStops.value.length < 2) {
     return null;
   }
 
-  return {
-    start: routeStartId.value,
-    end: routeEndId.value
-  };
+  return planCampusRoute(routeStops.value, travelMode.value);
 });
 
 const routeLabel = computed(() => {
-  const start = campusBuildings.find((building) => building.id === routeStartId.value);
-  const end = campusBuildings.find((building) => building.id === routeEndId.value);
-  return start && end ? `${start.name} -> ${end.name}` : '请选择路线';
+  if (!routePlan.value) {
+    return '请选择路线';
+  }
+  return routeStops.value.map((building) => building.name).join(' → ');
 });
 
 const routeBuildings = computed(() => {
@@ -56,11 +97,22 @@ const routeBuildings = computed(() => {
 });
 
 const miniMapRoutePoints = computed(() => {
-  return findCampusPath(routeBuildings.value.start, routeBuildings.value.end).map(toMiniMapPoint);
+  if (!routePlan.value?.reachable) {
+    return [];
+  }
+  return routePlan.value.points.map(toMiniMapPoint);
 });
 
 const miniMapPolyline = computed(() => {
   return miniMapRoutePoints.value.map((point) => `${point.x},${point.y}`).join(' ');
+});
+
+const miniMapStopPoints = computed(() => {
+  return routeStops.value.map((building) => ({
+    id: building.id,
+    x: ((building.position[0] + 22) / 44) * 100,
+    y: ((building.position[2] + 17) / 34) * 100
+  }));
 });
 
 const categoryStats = computed(() => {
@@ -76,7 +128,7 @@ const routeSeries = [18, 32, 44, 28, 52, 63];
 const campusMetrics = computed(() => [
   { label: '建筑数量', value: campusBuildings.length, suffix: '处' },
   { label: '推荐路线', value: recommendedRoutes.length, suffix: '条' },
-  { label: '今日访问', value: 1286, suffix: '人次' },
+  { label: '实时在校', value: crowdSnapshot.value.total.toLocaleString(), suffix: '人次' },
   { label: '开放区域', value: 18, suffix: '个' }
 ]);
 const serviceMeters = [
@@ -99,6 +151,35 @@ const mapBuildings = computed(() => {
   }));
 });
 
+const favoriteBuildings = computed(() => {
+  return favoriteIds.value
+    .map((id) => campusBuildings.find((building) => building.id === id))
+    .filter(Boolean);
+});
+
+const heatPopupBuilding = computed(() => {
+  return campusBuildings.find((building) => building.id === heatBuildingId.value) || null;
+});
+
+const heatPopupEntry = computed(() => getCrowdEntry(crowdSnapshot.value, heatBuildingId.value));
+
+function buildRouteRecord() {
+  const plan = routePlan.value;
+  if (!plan?.reachable) {
+    return null;
+  }
+
+  return {
+    name: `${routeBuildings.value.start?.name || '起点'} → ${routeBuildings.value.end?.name || '终点'}`,
+    startId: routeStartId.value,
+    endId: routeEndId.value,
+    waypointIds: [...routeWaypointIds.value],
+    mode: travelMode.value,
+    distanceMeters: plan.distanceMeters,
+    etaMinutes: plan.etaMinutes
+  };
+}
+
 function handleBuildingSelect(building) {
   const previousBuildingId = selectedBuildingId.value;
   focusedBuildingId.value = building.id;
@@ -107,6 +188,7 @@ function handleBuildingSelect(building) {
   if (previousBuildingId && previousBuildingId !== building.id) {
     routeStartId.value = previousBuildingId;
     routeEndId.value = building.id;
+    routeWaypointIds.value = [];
   } else if (routeStartId.value !== building.id) {
     routeEndId.value = building.id;
   }
@@ -128,8 +210,10 @@ function handleSearch(building) {
 }
 
 function applyRecommendedRoute(recommendedRoute) {
+  stopTour();
   routeStartId.value = recommendedRoute.start;
   routeEndId.value = recommendedRoute.end;
+  routeWaypointIds.value = [];
   selectedBuildingId.value = recommendedRoute.end;
   routeFocusKey.value += 1;
 }
@@ -143,8 +227,118 @@ function handleCameraState(state) {
   cameraHeading.value = state.heading;
 }
 
+function startTour() {
+  if (!routePlan.value?.reachable) {
+    return;
+  }
+
+  if (tourActive.value) {
+    tourKey.value += 1;
+    tourPaused.value = false;
+    return;
+  }
+
+  tourActive.value = true;
+  tourPaused.value = false;
+  tourKey.value += 1;
+  const record = buildRouteRecord();
+  if (record) {
+    addHistory(record);
+  }
+}
+
+function toggleTourPause() {
+  tourPaused.value = !tourPaused.value;
+}
+
+function stopTour() {
+  tourActive.value = false;
+  tourPaused.value = false;
+  activeTourStop.value = null;
+}
+
+function handleTourStop(payload) {
+  activeTourStop.value = payload;
+  selectedBuildingId.value = payload.buildingId;
+  tourStopKey.value += 1;
+}
+
+function handleTourEnd() {
+  tourActive.value = false;
+  tourPaused.value = false;
+}
+
+function handleSaveRoute() {
+  const record = buildRouteRecord();
+  if (record) {
+    saveRoute(record);
+    personalOpen.value = true;
+  }
+}
+
+function applyRouteRecord(record) {
+  stopTour();
+  routeStartId.value = record.startId;
+  routeEndId.value = record.endId;
+  routeWaypointIds.value = [...(record.waypointIds || [])];
+  travelMode.value = record.mode || 'walk';
+  selectedBuildingId.value = record.endId;
+  focusedBuildingId.value = record.endId;
+}
+
+function replayRoute(record) {
+  personalOpen.value = false;
+  applyRouteRecord(record);
+  window.setTimeout(() => {
+    routeFocusKey.value += 1;
+    startTour();
+  }, 120);
+}
+
+function locateBuilding(building) {
+  personalOpen.value = false;
+  selectedBuildingId.value = building.id;
+  focusedBuildingId.value = building.id;
+}
+
+function handleHeatSelect(buildingId) {
+  heatBuildingId.value = buildingId;
+  selectedBuildingId.value = buildingId;
+  focusedBuildingId.value = buildingId;
+}
+
+function handleHeatPick(buildingId) {
+  if (!buildingId) {
+    heatBuildingId.value = '';
+    return;
+  }
+
+  handleHeatSelect(buildingId);
+}
+
+function handleHeatLocate() {
+  if (heatBuildingId.value) {
+    focusedBuildingId.value = heatBuildingId.value;
+    cameraMode.value = 'near';
+    cameraFocusKey.value += 1;
+  }
+}
+
+watch(routePlan, (plan) => {
+  if (tourActive.value && !plan?.reachable) {
+    stopTour();
+  }
+}, { deep: false });
+
+onMounted(() => {
+  crowdTimer = window.setInterval(() => {
+    crowdSnapshot.value = createCrowdSnapshot(campusBuildings);
+  }, 5000);
+});
+
 onBeforeUnmount(() => {
   window.clearTimeout(buildingSelectTimer);
+  window.clearInterval(crowdTimer);
 });
 </script>
 
@@ -159,9 +353,20 @@ onBeforeUnmount(() => {
       :camera-mode="cameraMode"
       :camera-focus-key="cameraFocusKey"
       :scene-mode="sceneMode"
-      :route="route"
+      :route-plan="routePlan"
+      :tour-active="tourActive"
+      :tour-paused="tourPaused"
+      :tour-key="tourKey"
+      :heat-enabled="heatEnabled"
+      :crowd-snapshot="crowdSnapshot"
+      :heat-faculty="heatFaculty"
+      :heat-building-id="heatBuildingId"
+      :favorite-ids="favoriteIds"
       @select-building="handleBuildingSelect"
       @camera-state="handleCameraState"
+      @heat-select="handleHeatSelect"
+      @tour-stop="handleTourStop"
+      @tour-end="handleTourEnd"
     />
 
     <div class="hud-shade"></div>
@@ -174,6 +379,7 @@ onBeforeUnmount(() => {
     >
       {{ panoramaMode ? '显示面板' : '全景模式' }}
     </button>
+    <button class="profile-toggle" type="button" @click="personalOpen = true">个人中心</button>
 
     <header class="screen-header">
       <div class="brand-mark">V</div>
@@ -192,14 +398,32 @@ onBeforeUnmount(() => {
       v-model:category="activeCategory"
       v-model:start-id="routeStartId"
       v-model:end-id="routeEndId"
+      v-model:waypoint-ids="routeWaypointIds"
+      v-model:travel-mode="travelMode"
       :buildings="campusBuildings"
       :filtered-buildings="filteredBuildings"
       :recommended-routes="recommendedRoutes"
+      :route-plan="routePlan"
+      :tour-active="tourActive"
+      :tour-paused="tourPaused"
       @search="handleSearch"
       @route-pick="applyRecommendedRoute"
+      @tour-start="startTour"
+      @tour-toggle-pause="toggleTourPause"
+      @tour-stop="stopTour"
+      @save-route="handleSaveRoute"
     />
 
     <aside class="left-hud">
+      <HeatmapPanel
+        v-model:enabled="heatEnabled"
+        v-model:faculty="heatFaculty"
+        v-model:building-id="heatBuildingId"
+        :buildings="campusBuildings"
+        :crowd-snapshot="crowdSnapshot"
+        @pick="handleHeatPick"
+      />
+
       <section class="glass-panel traffic-panel">
         <div class="panel-heading">
           <span>校园访问趋势</span>
@@ -255,7 +479,12 @@ onBeforeUnmount(() => {
     </aside>
 
     <aside class="right-hud">
-      <InfoPanel :building="selectedBuilding" />
+      <InfoPanel
+        :building="selectedBuilding"
+        :crowd-entry="selectedCrowdEntry"
+        :is-favorite="isFavorite(selectedBuildingId)"
+        @toggle-favorite="toggleFavorite"
+      />
 
       <section class="glass-panel camera-panel">
         <div class="panel-heading">
@@ -283,10 +512,18 @@ onBeforeUnmount(() => {
 
       <section class="glass-panel">
         <div class="panel-heading">
-          <span>当前路线</span>
+          <span>当前路线 · {{ MODE_LABEL[travelMode] }}</span>
           <b>{{ activeRoute.name }}</b>
         </div>
         <p class="route-title">{{ routeLabel }}</p>
+        <div v-if="routePlan?.reachable" class="route-stats-inline">
+          <span>{{ routePlan.distanceMeters }} 米</span>
+          <span>约 {{ routePlan.etaMinutes }} 分钟</span>
+          <span>{{ Math.max(routePlan.stops.length - 2, 0) }} 个途经点</span>
+        </div>
+        <p v-else-if="routePlan?.unreachableLeg" class="route-warning compact">
+          ⚠ {{ routePlan.unreachableLeg.reason }}
+        </p>
         <div class="route-bars">
           <i
             v-for="(value, index) in routeSeries"
@@ -320,8 +557,18 @@ onBeforeUnmount(() => {
         <i class="map-road horizontal"></i>
         <i class="map-road vertical"></i>
         <svg class="mini-route" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <polyline :points="miniMapPolyline"></polyline>
+          <polyline
+            v-if="miniMapPolyline"
+            :points="miniMapPolyline"
+            :class="{ bike: travelMode === 'bike' }"
+          ></polyline>
         </svg>
+        <i
+          v-for="stop in miniMapStopPoints"
+          :key="stop.id"
+          class="map-stop"
+          :style="{ left: `${stop.x}%`, top: `${stop.y}%` }"
+        ></i>
         <i class="camera-heading" :style="{ transform: `translate(-50%, -50%) rotate(${cameraHeading}deg)` }"></i>
         <button
           v-for="building in mapBuildings"
@@ -334,5 +581,39 @@ onBeforeUnmount(() => {
         ></button>
       </div>
     </section>
+
+    <HeatPopup
+      :building="heatPopupBuilding"
+      :entry="heatPopupEntry"
+      @close="heatBuildingId = ''"
+      @locate="handleHeatLocate"
+    />
+
+    <transition name="tour-hud">
+      <section v-if="tourActive" class="tour-hud glass-panel">
+        <div class="tour-hud-title">
+          <span>路线飞行浏览中 · {{ MODE_LABEL[travelMode] }}</span>
+          <button type="button" @click="toggleTourPause">{{ tourPaused ? '继续' : '暂停' }}</button>
+          <button type="button" @click="stopTour">结束</button>
+        </div>
+        <p v-if="activeTourStop">
+          <em>{{ activeTourStop.index + 1 }}/{{ routePlan.stops.length }}</em>
+          正在经过：<strong>{{ activeTourStop.buildingName }}</strong>
+        </p>
+      </section>
+    </transition>
+
+    <PersonalCenter
+      :open="personalOpen"
+      :buildings="campusBuildings"
+      :favorite-buildings="favoriteBuildings"
+      :saved-routes="savedRoutes"
+      :history="history"
+      @close="personalOpen = false"
+      @locate-building="locateBuilding"
+      @replay-route="replayRoute"
+      @remove-route="removeRoute"
+      @remove-history="removeHistory"
+    />
   </main>
 </template>
