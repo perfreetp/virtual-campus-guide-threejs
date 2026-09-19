@@ -34,9 +34,29 @@ const props = defineProps({
     type: Number,
     default: 0
   },
-  sceneMode: {
+  weather: {
     type: String,
-    default: 'day'
+    default: 'sunny'
+  },
+  timeOfDay: {
+    type: Number,
+    default: 14
+  },
+  monitors: {
+    type: Array,
+    default: () => []
+  },
+  monitorRegion: {
+    type: String,
+    default: 'all'
+  },
+  monitorMetric: {
+    type: String,
+    default: 'all'
+  },
+  selectedMonitorId: {
+    type: String,
+    default: ''
   },
   route: {
     type: Object,
@@ -44,7 +64,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['selectBuilding', 'cameraState']);
+const emit = defineEmits(['selectBuilding', 'selectMonitor', 'cameraState']);
 
 const canvasHost = ref(null);
 let renderer;
@@ -64,9 +84,15 @@ let ambientLight;
 let sunLight;
 let fillLight;
 let rainGroup;
+let snowGroup;
+let groundMaterial;
 let frameCount = 0;
 const buildingGroups = new Map();
 const interactiveMeshes = [];
+const monitorGroups = new Map();
+const monitorHitMeshes = [];
+const windowMaterials = new Set();
+const lampLights = [];
 const clock = new THREE.Clock();
 const buildingPalettes = {
   teaching: {
@@ -146,6 +172,13 @@ function createBuilding(building, index) {
       child.userData.building = building;
       child.userData.baseColor = child.material.color?.clone();
       child.userData.baseEmissive = child.material.emissive?.clone();
+      if (child.material.isMeshStandardMaterial) {
+        child.userData.baseRoughness = child.material.roughness;
+        child.userData.baseMetalness = child.material.metalness;
+      }
+      if (child.userData.isWindow) {
+        windowMaterials.add(child.material);
+      }
       interactiveMeshes.push(child);
     }
   });
@@ -467,6 +500,7 @@ function createCampusBase() {
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
+  groundMaterial = ground.material;
   scene.add(ground);
 
   const grid = new THREE.GridHelper(44, 44, '#49c9e8', '#b7dce8');
@@ -580,6 +614,7 @@ function addTreeRows() {
 function addLightPoles() {
   const poleMaterial = new THREE.MeshBasicMaterial({ color: '#dffbff' });
   const lightMaterial = new THREE.MeshBasicMaterial({ color: '#44edff' });
+  const glowTexture = createGlowTexture();
   [-13, -7, -1, 5, 11, 17].forEach((x) => {
     [-9.2, 5.2].forEach((z) => {
       const pole = new THREE.Group();
@@ -587,11 +622,38 @@ function addLightPoles() {
       stem.position.y = 0.6;
       const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 12), lightMaterial);
       lamp.position.y = 1.28;
-      pole.add(stem, lamp);
+      const glow = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: glowTexture,
+          color: '#9df2ff',
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        })
+      );
+      glow.scale.set(1.6, 1.6, 1);
+      glow.position.y = 1.28;
+      pole.add(stem, lamp, glow);
       pole.position.set(x, 0, z);
+      lampLights.push({ lamp, glow });
       scene.add(pole);
     });
   });
+}
+
+function createGlowTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  const gradient = context.createRadialGradient(32, 32, 2, 32, 32, 30);
+  gradient.addColorStop(0, 'rgba(255,255,255,0.95)');
+  gradient.addColorStop(0.4, 'rgba(160,230,255,0.45)');
+  gradient.addColorStop(1, 'rgba(120,200,255,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(canvas);
 }
 
 function setupScene() {
@@ -634,10 +696,12 @@ function setupScene() {
 
   createCampusBase();
   props.buildings.forEach(createBuilding);
+  createMonitorLayer();
   updateCategoryVisibility();
   updateHighlights();
   updateRoute();
-  updateEnvironment();
+  updateMonitorLayer();
+  updateAtmosphere();
 }
 
 function handlePointerDown(event) {
@@ -666,6 +730,24 @@ function handlePointerUp(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
+  const monitorHits = raycaster.intersectObjects(
+    monitorHitMeshes.filter((mesh) => {
+      let node = mesh;
+      while (node) {
+        if (!node.visible) return false;
+        node = node.parent;
+      }
+      return true;
+    }),
+    false
+  );
+  if (monitorHits.length) {
+    const monitorId = monitorHits[0].object.userData.monitorId;
+    if (monitorId) {
+      emit('selectMonitor', monitorId);
+      return;
+    }
+  }
   const hits = raycaster.intersectObjects(interactiveMeshes, false);
   if (!hits.length) {
     return;
@@ -686,6 +768,12 @@ function handlePointerMove(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
+  const monitorHits = raycaster.intersectObjects(monitorHitMeshes.filter((mesh) => mesh.parent?.visible), false);
+  if (monitorHits.length) {
+    renderer.domElement.style.cursor = 'pointer';
+    hoveredBuildingId = '';
+    return;
+  }
   const hits = raycaster.intersectObjects(interactiveMeshes, false);
   const building = hits[0]?.object.userData.building;
   hoveredBuildingId = building?.id || '';
@@ -711,6 +799,7 @@ function updateCategoryVisibility() {
 }
 
 function updateHighlights() {
+  const nightEmissive = scene?.userData.nightEmissive ?? 0.05;
   buildingGroups.forEach((group, id) => {
     const isActive = id === props.selectedBuildingId || id === props.focusedBuildingId;
     group.traverse((child) => {
@@ -728,7 +817,7 @@ function updateHighlights() {
         child.material.color.copy(child.userData.baseColor);
         if (child.material.emissive && child.userData.baseEmissive) {
           child.material.emissive.copy(child.userData.baseEmissive);
-          child.material.emissiveIntensity = 0.05;
+          child.material.emissiveIntensity = nightEmissive;
         }
       }
     });
@@ -862,59 +951,240 @@ function createRain() {
   return rain;
 }
 
-function updateEnvironment() {
+function createSnow() {
+  const count = 420;
+  const positions = new Float32Array(count * 3);
+  const speeds = new Float32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    positions[i * 3] = THREE.MathUtils.randFloatSpread(44);
+    positions[i * 3 + 1] = THREE.MathUtils.randFloat(0, 16);
+    positions[i * 3 + 2] = THREE.MathUtils.randFloatSpread(34);
+    speeds[i] = THREE.MathUtils.randFloat(0.015, 0.045);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const snow = new THREE.Points(
+    geometry,
+    new THREE.PointsMaterial({
+      color: '#f2fbff',
+      size: 0.14,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false
+    })
+  );
+  snow.userData.speeds = speeds;
+  return snow;
+}
+
+function disposeGroup(group) {
+  group.traverse((child) => {
+    child.geometry?.dispose();
+    child.material?.dispose();
+  });
+}
+
+function getDayFactor(hour) {
+  const elevation = Math.sin(((hour - 6) / 12) * Math.PI);
+  return THREE.MathUtils.clamp(elevation * 1.35, 0, 1);
+}
+
+function updateAtmosphere() {
   if (!scene || !ambientLight || !sunLight || !fillLight) {
     return;
   }
 
-  const modes = {
-    day: {
-      background: '#0a1726',
-      fog: '#0a1726',
-      ambient: 1.55,
-      sun: 2.9,
-      fill: 22
-    },
-    night: {
-      background: '#020916',
-      fog: '#020916',
-      ambient: 0.72,
-      sun: 0.85,
-      fill: 34
-    },
-    rain: {
-      background: '#07111d',
-      fog: '#07111d',
-      ambient: 1.05,
-      sun: 1.35,
-      fill: 28
-    }
+  const hour = props.timeOfDay;
+  const dayFactor = getDayFactor(hour);
+  const nightFactor = 1 - dayFactor;
+  const elevation = Math.sin(((hour - 6) / 12) * Math.PI);
+  const twilight = THREE.MathUtils.clamp(1 - Math.abs(elevation) * 3.2, 0, 1);
+  const weather = props.weather;
+
+  const skyDay = new THREE.Color('#0e2540');
+  const skyNight = new THREE.Color('#02060f');
+  const sky = skyNight.clone().lerp(skyDay, dayFactor);
+  if (weather === 'fog') {
+    sky.lerp(new THREE.Color('#2b3742'), 0.55);
+  } else if (weather === 'snow') {
+    sky.lerp(new THREE.Color('#233140'), 0.4);
+  } else if (weather === 'rain') {
+    sky.lerp(new THREE.Color('#0a141f'), 0.45);
+  }
+  sky.lerp(new THREE.Color('#3a2b3f'), twilight * 0.35);
+  scene.background = sky;
+
+  const fogRanges = {
+    sunny: [22, 58],
+    rain: [13, 40],
+    fog: [9, 32],
+    snow: [11, 34]
   };
-  const mode = modes[props.sceneMode] || modes.day;
+  const [fogNear, fogFar] = fogRanges[weather] || fogRanges.sunny;
+  scene.fog = new THREE.Fog(sky.clone(), fogNear, fogFar - nightFactor * 6);
 
-  scene.background = new THREE.Color(mode.background);
-  scene.fog = new THREE.Fog(mode.fog, 18, props.sceneMode === 'rain' ? 38 : 58);
-  ambientLight.intensity = mode.ambient;
-  sunLight.intensity = mode.sun;
-  fillLight.intensity = mode.fill;
-  fillLight.color.set(props.sceneMode === 'night' ? '#16d8ff' : '#29d7ff');
+  const weatherSunFactor = { sunny: 1, rain: 0.42, fog: 0.3, snow: 0.5 }[weather] ?? 1;
+  const sunAngle = ((hour - 6) / 12) * Math.PI;
+  sunLight.position.set(Math.cos(sunAngle) * 22, Math.max(Math.sin(sunAngle) * 20, 3), 10);
+  sunLight.intensity = (0.3 + dayFactor * 2.7) * weatherSunFactor;
+  const sunColor = new THREE.Color('#ffffff').lerp(new THREE.Color('#ffb36b'), twilight * 0.8);
+  if (dayFactor < 0.12) {
+    sunColor.set('#8fb4ff');
+  }
+  sunLight.color.copy(sunColor);
 
+  const weatherAmbientFactor = { sunny: 1, rain: 0.78, fog: 0.92, snow: 0.95 }[weather] ?? 1;
+  ambientLight.intensity = (0.5 + dayFactor * 1.1) * weatherAmbientFactor;
+  fillLight.intensity = 18 + nightFactor * 16;
+  fillLight.color.set(dayFactor < 0.3 ? '#16d8ff' : '#29d7ff');
+
+  scene.userData.nightEmissive = 0.05 + nightFactor * 0.2;
+  updateHighlights();
+
+  windowMaterials.forEach((material) => {
+    material.color.copy(new THREE.Color('#e8fbff').lerp(new THREE.Color('#ffd98a'), nightFactor));
+  });
+  lampLights.forEach(({ lamp, glow }) => {
+    lamp.material.color.copy(new THREE.Color('#44edff').lerp(new THREE.Color('#ffe9b0'), nightFactor * 0.85));
+    glow.material.opacity = nightFactor * 0.85;
+  });
+
+  const wetness = weather === 'rain' ? 1 : weather === 'snow' ? 0.65 : 0;
+  if (groundMaterial) {
+    groundMaterial.roughness = THREE.MathUtils.lerp(0.74, 0.16, wetness);
+    groundMaterial.metalness = THREE.MathUtils.lerp(0.03, 0.5, wetness);
+    groundMaterial.color.copy(new THREE.Color('#d8edf5').lerp(new THREE.Color('#9fb9c8'), wetness * 0.8));
+  }
   buildingGroups.forEach((group) => {
     group.traverse((child) => {
-      if (child.isMesh && child.material?.emissive) {
-        child.material.emissiveIntensity = props.sceneMode === 'night' ? 0.22 : 0.05;
+      if (child.isMesh && child.userData.baseRoughness !== undefined) {
+        child.material.roughness = Math.max(0.08, child.userData.baseRoughness - wetness * 0.4);
+        child.material.metalness = Math.min(1, child.userData.baseMetalness + wetness * 0.35);
       }
     });
   });
 
-  if (props.sceneMode === 'rain' && !rainGroup) {
+  if (weather === 'rain' && !rainGroup) {
     rainGroup = createRain();
     scene.add(rainGroup);
-  } else if (props.sceneMode !== 'rain' && rainGroup) {
+  } else if (weather !== 'rain' && rainGroup) {
     scene.remove(rainGroup);
-    rainGroup.traverse((child) => child.geometry?.dispose());
+    disposeGroup(rainGroup);
     rainGroup = null;
   }
+
+  if (weather === 'snow' && !snowGroup) {
+    snowGroup = createSnow();
+    scene.add(snowGroup);
+  } else if (weather !== 'snow' && snowGroup) {
+    scene.remove(snowGroup);
+    disposeGroup(snowGroup);
+    snowGroup = null;
+  }
+}
+
+function createMonitorLayer() {
+  props.monitors.forEach((point) => {
+    const group = new THREE.Group();
+    group.position.set(point.position[0], 0, point.position[2]);
+    group.userData.monitorId = point.id;
+
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.035, 0.05, 1.5, 8),
+      new THREE.MeshBasicMaterial({ color: '#bfe9f5', transparent: true, opacity: 0.85 })
+    );
+    pole.position.y = 0.75;
+    group.add(pole);
+
+    const beacon = new THREE.Mesh(
+      new THREE.SphereGeometry(0.24, 20, 20),
+      new THREE.MeshBasicMaterial({ color: '#35e08c', transparent: true, opacity: 0.95 })
+    );
+    beacon.position.y = 1.66;
+    beacon.userData.monitorId = point.id;
+    group.add(beacon);
+    monitorHitMeshes.push(beacon);
+
+    const halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: createGlowTexture(),
+        color: '#35e08c',
+        transparent: true,
+        opacity: 0.5,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    halo.scale.set(1.15, 1.15, 1);
+    halo.position.y = 1.66;
+    group.add(halo);
+
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.5, 0.035, 8, 40),
+      new THREE.MeshBasicMaterial({
+        color: '#35e08c',
+        transparent: true,
+        opacity: 0.7,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.08;
+    group.add(ring);
+
+    const label = createTextSprite(point.name);
+    label.position.set(0, 2.25, 0);
+    label.scale.set(2.1, 0.54, 1);
+    group.add(label);
+
+    group.userData.beacon = beacon;
+    group.userData.halo = halo;
+    group.userData.ring = ring;
+    group.userData.label = label;
+    scene.add(group);
+    monitorGroups.set(point.id, group);
+  });
+}
+
+function updateMonitorLayer() {
+  const metric = props.monitorMetric;
+  props.monitors.forEach((point) => {
+    const group = monitorGroups.get(point.id);
+    if (!group) {
+      return;
+    }
+
+    const regionVisible = props.monitorRegion === 'all' || point.category === props.monitorRegion;
+    group.visible = regionVisible;
+
+    const level = metric === 'all' ? point.worstLevel : point.metrics[metric]?.level ?? 0;
+    const color = new THREE.Color(['#35e08c', '#ffd54a', '#ff9f43', '#ff5252'][level]);
+    group.userData.beacon.material.color.copy(color);
+    group.userData.halo.material.color.copy(color);
+    group.userData.ring.material.color.copy(color);
+    group.userData.alert = level >= 3;
+    group.userData.selected = point.id === props.selectedMonitorId;
+  });
+}
+
+function focusMonitor(id) {
+  const group = monitorGroups.get(id);
+  if (!group) {
+    return;
+  }
+
+  orbitingBuildingId = '';
+  const target = new THREE.Vector3(group.position.x, 1.3, group.position.z);
+  const direction = camera.position.clone().sub(controls.target);
+  direction.y = 0;
+  if (direction.lengthSq() < 0.001) {
+    direction.set(1, 0, 1);
+  }
+  direction.normalize();
+  const nextPosition = target.clone().add(direction.multiplyScalar(6.5));
+  nextPosition.y = 4.4;
+  startCameraFlight(nextPosition, target, 1.15);
 }
 
 function updateRoute() {
@@ -1162,6 +1432,46 @@ function animate() {
     });
   }
 
+  if (snowGroup) {
+    const positions = snowGroup.geometry.attributes.position;
+    const speeds = snowGroup.userData.speeds;
+    for (let i = 0; i < speeds.length; i += 1) {
+      let y = positions.getY(i) - speeds[i];
+      if (y < 0) {
+        y = 16;
+      }
+      positions.setY(i, y);
+      positions.setX(i, positions.getX(i) + Math.sin(elapsed * 0.8 + i) * 0.004);
+    }
+    positions.needsUpdate = true;
+  }
+
+  monitorGroups.forEach((group) => {
+    if (!group.visible) {
+      return;
+    }
+    const { beacon, halo, ring, label } = group.userData;
+    if (group.userData.alert) {
+      const pulse = 0.5 + Math.abs(Math.sin(elapsed * 5.2)) * 0.5;
+      beacon.material.opacity = 0.35 + pulse * 0.65;
+      beacon.scale.setScalar(1 + pulse * 0.45);
+      halo.material.opacity = 0.25 + pulse * 0.6;
+      halo.scale.setScalar(1.05 + pulse * 0.7);
+      ring.scale.setScalar(1 + pulse * 0.35);
+    } else {
+      const breathe = 1 + Math.sin(elapsed * 2.2) * 0.08;
+      beacon.material.opacity = 0.95;
+      beacon.scale.setScalar(group.userData.selected ? 1.3 : breathe);
+      halo.material.opacity = group.userData.selected ? 0.75 : 0.45;
+      halo.scale.setScalar(group.userData.selected ? 1.6 : 1.15);
+      ring.scale.setScalar(group.userData.selected ? 1.25 : 1);
+    }
+    ring.rotation.z = elapsed * 0.6;
+    if (label?.material) {
+      label.material.opacity = group.userData.selected ? 1 : 0.82;
+    }
+  });
+
   controls.update();
   if (frameCount % 12 === 0) {
     const direction = camera.position.clone().sub(controls.target);
@@ -1182,7 +1492,11 @@ onMounted(() => {
   renderer.domElement.addEventListener('pointerleave', handlePointerLeave);
   renderer.domElement.addEventListener('pointerup', handlePointerUp);
   animate();
-  focusBuilding(props.focusedBuildingId);
+  if (props.selectedMonitorId) {
+    focusMonitor(props.selectedMonitorId);
+  } else {
+    focusBuilding(props.focusedBuildingId);
+  }
 });
 
 onBeforeUnmount(() => {
@@ -1202,7 +1516,13 @@ watch(() => props.focusedBuildingId, (id) => focusBuilding(id));
 watch(() => props.route, updateRoute, { deep: true });
 watch(() => props.routeFocusKey, () => focusRoute());
 watch(() => props.cameraFocusKey, () => focusBuilding(props.selectedBuildingId, props.cameraMode));
-watch(() => props.sceneMode, updateEnvironment);
+watch(() => [props.weather, props.timeOfDay], updateAtmosphere);
+watch(() => [props.monitors, props.monitorRegion, props.monitorMetric, props.selectedMonitorId], updateMonitorLayer, { deep: true });
+watch(() => props.selectedMonitorId, (id) => {
+  if (id) {
+    focusMonitor(id);
+  }
+});
 </script>
 
 <template>

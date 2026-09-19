@@ -39,6 +39,7 @@ export function addWindowGrid(group, width, height, depth) {
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
       const windowMesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.28, 0.035), windowMaterial);
+      windowMesh.userData.isWindow = true;
       windowMesh.position.set(
         -width / 2 + 0.65 + col * (width - 1.3) / Math.max(1, cols - 1),
         0.8 + row * 0.72,

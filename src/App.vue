@@ -1,10 +1,15 @@
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import CampusScene from './components/CampusScene.vue';
 import ControlPanel from './components/ControlPanel.vue';
 import InfoPanel from './components/InfoPanel.vue';
+import MonitorDetailCard from './components/MonitorDetailCard.vue';
+import AlertCenter from './components/AlertCenter.vue';
+import EnvControlBar from './components/EnvControlBar.vue';
 import { campusBuildings, categoryNames, recommendedRoutes } from './mock/campusData';
+import { levelColors, levelNames, metricNames, monitorPoints } from './mock/environmentData';
 import { findCampusPath, toMiniMapPoint } from './utils/pathfinding';
+import { buildAlerts, formatHour, getPointSnapshot } from './utils/environment';
 
 const activeCategory = ref('all');
 const selectedBuildingId = ref(campusBuildings[0].id);
@@ -14,10 +19,105 @@ const routeEndId = ref('library');
 const routeFocusKey = ref(0);
 const cameraMode = ref('near');
 const cameraFocusKey = ref(0);
-const sceneMode = ref('day');
 const cameraHeading = ref(45);
 const panoramaMode = ref(false);
 let buildingSelectTimer;
+
+const urlParams = new URLSearchParams(window.location.search);
+const initialTime = Number(urlParams.get('time'));
+const weather = ref(urlParams.get('weather') || 'sunny');
+const timeOfDay = ref(Number.isFinite(initialTime) && urlParams.has('time') ? initialTime : 14);
+const timePlaying = ref(false);
+const selectedMonitorId = ref(urlParams.get('monitor') || '');
+const alertCenterOpen = ref(urlParams.get('alerts') === '1');
+
+const storedFilter = (() => {
+  try {
+    return JSON.parse(window.localStorage.getItem('vc:monitor-filter')) || {};
+  } catch {
+    return {};
+  }
+})();
+const monitorRegion = ref(storedFilter.region || 'all');
+const monitorMetric = ref(storedFilter.metric || 'all');
+
+const handledAlertIds = ref((() => {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem('vc:handled-alerts'));
+    return Array.isArray(stored) ? stored : [];
+  } catch {
+    return [];
+  }
+})());
+
+watch([monitorRegion, monitorMetric], ([region, metric]) => {
+  window.localStorage.setItem('vc:monitor-filter', JSON.stringify({ region, metric }));
+});
+
+watch(handledAlertIds, (ids) => {
+  window.localStorage.setItem('vc:handled-alerts', JSON.stringify(ids));
+}, { deep: true });
+
+const playTimer = window.setInterval(() => {
+  if (timePlaying.value) {
+    timeOfDay.value = (timeOfDay.value + 0.05) % 24;
+  }
+}, 100);
+
+const monitorSnapshots = computed(() => {
+  return monitorPoints.map((point) => getPointSnapshot(point, timeOfDay.value));
+});
+
+const monitorRegions = computed(() => {
+  return [
+    { key: 'all', label: '全部区域' },
+    ...Object.entries(categoryNames).map(([key, label]) => ({ key, label }))
+  ];
+});
+
+const monitorMetrics = computed(() => {
+  return [
+    { key: 'all', label: '全部指标' },
+    ...Object.entries(metricNames).map(([key, label]) => ({ key, label }))
+  ];
+});
+
+const visibleMonitorCount = computed(() => {
+  return monitorSnapshots.value.filter((point) => {
+    return monitorRegion.value === 'all' || point.category === monitorRegion.value;
+  }).length;
+});
+
+const selectedMonitor = computed(() => {
+  return monitorSnapshots.value.find((point) => point.id === selectedMonitorId.value) || null;
+});
+
+const envAlerts = computed(() => buildAlerts(monitorSnapshots.value));
+
+const pendingAlertCount = computed(() => {
+  return envAlerts.value.filter((alert) => !handledAlertIds.value.includes(alert.id)).length;
+});
+
+const levelLegend = levelNames.map((name, index) => ({ name, color: levelColors[index] }));
+
+function handleMonitorSelect(monitorId) {
+  selectedMonitorId.value = monitorId;
+}
+
+function handleAlertResolve(alertId) {
+  if (!handledAlertIds.value.includes(alertId)) {
+    handledAlertIds.value = [...handledAlertIds.value, alertId];
+  }
+}
+
+function handleAllAlerts() {
+  const merged = new Set([...handledAlertIds.value, ...envAlerts.value.map((alert) => alert.id)]);
+  handledAlertIds.value = [...merged];
+}
+
+function locateAlertPoint(pointId) {
+  selectedMonitorId.value = pointId;
+}
 
 const selectedBuilding = computed(() => {
   return campusBuildings.find((building) => building.id === selectedBuildingId.value) || campusBuildings[0];
@@ -145,6 +245,7 @@ function handleCameraState(state) {
 
 onBeforeUnmount(() => {
   window.clearTimeout(buildingSelectTimer);
+  window.clearInterval(playTimer);
 });
 </script>
 
@@ -158,9 +259,15 @@ onBeforeUnmount(() => {
       :route-focus-key="routeFocusKey"
       :camera-mode="cameraMode"
       :camera-focus-key="cameraFocusKey"
-      :scene-mode="sceneMode"
+      :weather="weather"
+      :time-of-day="timeOfDay"
+      :monitors="monitorSnapshots"
+      :monitor-region="monitorRegion"
+      :monitor-metric="monitorMetric"
+      :selected-monitor-id="selectedMonitorId"
       :route="route"
       @select-building="handleBuildingSelect"
+      @select-monitor="handleMonitorSelect"
       @camera-state="handleCameraState"
     />
 
@@ -184,7 +291,17 @@ onBeforeUnmount(() => {
       <div class="system-status">
         <span>WebGL 在线</span>
         <span>Three.js 场景同步</span>
-        <strong>17:38</strong>
+        <strong>{{ formatHour(timeOfDay) }}</strong>
+        <button
+          class="alert-bell"
+          type="button"
+          :class="{ active: alertCenterOpen }"
+          aria-label="环境告警中心"
+          @click="alertCenterOpen = !alertCenterOpen"
+        >
+          告警
+          <i v-if="pendingAlertCount > 0">{{ pendingAlertCount > 99 ? '99+' : pendingAlertCount }}</i>
+        </button>
       </div>
     </header>
 
@@ -252,6 +369,48 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </section>
+
+      <section class="glass-panel monitor-filter-panel">
+        <div class="panel-heading">
+          <span>环境监测图层</span>
+          <b>{{ visibleMonitorCount }} 个监测点</b>
+        </div>
+        <div class="monitor-filter-group">
+          <p>按区域</p>
+          <div class="filter-row">
+            <button
+              v-for="item in monitorRegions"
+              :key="item.key"
+              class="chip"
+              :class="{ active: monitorRegion === item.key }"
+              type="button"
+              @click="monitorRegion = item.key"
+            >
+              {{ item.label }}
+            </button>
+          </div>
+        </div>
+        <div class="monitor-filter-group">
+          <p>按指标</p>
+          <div class="filter-row">
+            <button
+              v-for="item in monitorMetrics"
+              :key="item.key"
+              class="chip"
+              :class="{ active: monitorMetric === item.key }"
+              type="button"
+              @click="monitorMetric = item.key"
+            >
+              {{ item.label }}
+            </button>
+          </div>
+        </div>
+        <div class="level-legend">
+          <span v-for="item in levelLegend" :key="item.name">
+            <i :style="{ background: item.color }"></i>{{ item.name }}
+          </span>
+        </div>
+      </section>
     </aside>
 
     <aside class="right-hud">
@@ -266,18 +425,6 @@ onBeforeUnmount(() => {
           <button :class="{ active: cameraMode === 'near' }" type="button" @click="applyCameraMode('near')">近景</button>
           <button :class="{ active: cameraMode === 'top' }" type="button" @click="applyCameraMode('top')">俯视</button>
           <button :class="{ active: cameraMode === 'orbit' }" type="button" @click="applyCameraMode('orbit')">环绕</button>
-        </div>
-      </section>
-
-      <section class="glass-panel scene-mode-panel">
-        <div class="panel-heading">
-          <span>场景氛围</span>
-          <b>{{ sceneMode }}</b>
-        </div>
-        <div class="camera-actions">
-          <button :class="{ active: sceneMode === 'day' }" type="button" @click="sceneMode = 'day'">白天</button>
-          <button :class="{ active: sceneMode === 'night' }" type="button" @click="sceneMode = 'night'">夜景</button>
-          <button :class="{ active: sceneMode === 'rain' }" type="button" @click="sceneMode = 'rain'">雨天</button>
         </div>
       </section>
 
@@ -334,5 +481,31 @@ onBeforeUnmount(() => {
         ></button>
       </div>
     </section>
+
+    <MonitorDetailCard
+      v-if="selectedMonitor"
+      :monitor="selectedMonitor"
+      :hour="timeOfDay"
+      :active-metric="monitorMetric"
+      @close="selectedMonitorId = ''"
+    />
+
+    <AlertCenter
+      v-if="alertCenterOpen"
+      :alerts="envAlerts"
+      :handled-ids="handledAlertIds"
+      :hour="timeOfDay"
+      @handle="handleAlertResolve"
+      @handle-all="handleAllAlerts"
+      @locate="locateAlertPoint"
+      @close="alertCenterOpen = false"
+    />
+
+    <EnvControlBar
+      v-model:weather="weather"
+      v-model:time-of-day="timeOfDay"
+      :playing="timePlaying"
+      @toggle-play="timePlaying = !timePlaying"
+    />
   </main>
 </template>
